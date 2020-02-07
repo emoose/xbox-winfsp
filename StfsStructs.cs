@@ -1,0 +1,404 @@
+﻿using System;
+using System.Text;
+using System.Runtime.InteropServices;
+
+namespace XboxWinFsp
+{
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    public struct STF_VOLUME_DESCRIPTOR
+    {
+        public byte DescriptorLength;
+        public byte Version;
+        public byte Flags;
+        public ushort DirectoryAllocationBlocks;
+        public byte DirectoryFirstBlockNumber0;
+        public byte DirectoryFirstBlockNumber1;
+        public byte DirectoryFirstBlockNumber2;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x14)]
+        public byte[] RootHash;
+        public uint NumberOfTotalBlocks;
+        public uint NumberOfFreeBlocks;
+
+        public bool ReadOnlyFormat
+        {
+            get
+            {
+                return (Flags & 1) == 1;
+            }
+        }
+
+        public bool RootActiveIndex
+        {
+            get
+            {
+                return (Flags & 2) == 2;
+            }
+        }
+
+        public int DirectoryFirstBlockNumber
+        {
+            get
+            {
+                return DirectoryFirstBlockNumber0 | (DirectoryFirstBlockNumber1 << 8) | (DirectoryFirstBlockNumber2 << 16);
+            }
+        }
+
+        public void EndianSwap()
+        {
+            // DirectoryAllocationBlocks = DirectoryAllocationBlocks.EndianSwap();
+            NumberOfTotalBlocks = NumberOfTotalBlocks.EndianSwap();
+            NumberOfFreeBlocks = NumberOfFreeBlocks.EndianSwap();
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    public struct STF_HASH_ENTRY
+    {
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x14)]
+        public byte[] Hash;
+
+        public byte Flags;
+        public byte Level0NextBlock2;
+        public byte Level0NextBlock1;
+        public byte Level0NextBlock0;
+
+        public bool LevelNActiveIndex
+        {
+            get
+            {
+                return (Flags & 0x40) == 0x40;
+            }
+        }
+
+        public int Level0NextBlock
+        {
+            get
+            {
+                return Level0NextBlock0 | (Level0NextBlock1 << 8) | (Level0NextBlock2 << 16);
+            }
+            set
+            {
+                Level0NextBlock0 = (byte)(value & 0xFF);
+                Level0NextBlock1 = (byte)((value >> 8) & 0xFF);
+                Level0NextBlock2 = (byte)((value >> 16) & 0xFF);
+            }
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    public struct STF_HASH_BLOCK
+    {
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 170)]
+        public STF_HASH_ENTRY[] Entries;
+        public uint NumberOfCommittedBlocks;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 12)]
+        public byte[] Padding;
+
+        public void EndianSwap()
+        {
+            NumberOfCommittedBlocks = NumberOfCommittedBlocks.EndianSwap();
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    public struct XCONTENT_HEADER
+    {
+        public uint SignatureType;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x228)]
+        public byte[] Signature;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x100)]
+        public byte[] LicenseDescriptors;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x14)]
+        public byte[] ContentId;
+        public uint SizeOfHeaders;
+
+        public void EndianSwap()
+        {
+            SignatureType = SignatureType.EndianSwap();
+            SizeOfHeaders = SizeOfHeaders.EndianSwap();
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack = 1)]
+    public struct UCHAR_80
+    {
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x100)]
+        public byte[] Bytes;
+
+        public string String
+        {
+            get
+            {
+                return Encoding.Unicode.GetString(Bytes).Trim(new char[] { '\0' });
+            }
+        }
+
+        public void EndianSwap()
+        {
+            for (int i = 0; i < Bytes.Length; i += 2)
+                Array.Reverse(Bytes, i, 2);
+        }
+
+        public override string ToString()
+        {
+            return String;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack = 1)]
+    public struct UCHAR_40
+    {
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x80)]
+        public byte[] Bytes;
+
+        public string String
+        {
+            get
+            {
+                return Encoding.Unicode.GetString(Bytes).Trim(new char[] { '\0' });
+            }
+        }
+
+        public void EndianSwap()
+        {
+            for (int i = 0; i < Bytes.Length; i += 2)
+                Array.Reverse(Bytes, i, 2);
+        }
+
+        public override string ToString()
+        {
+            return String;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    public struct XEX2_EXECUTION_ID
+    {
+        public uint MediaId;
+        public byte VersionMajorMinor;
+        public ushort VersionBuild;
+        public byte VersionQFE;
+        public byte BaseVersionMajorMinor;
+        public ushort BaseVersionBuild;
+        public byte BaseVersionQFE;
+        public uint TitleId;
+        public byte Platform;
+        public byte ExecutableType;
+        public byte DiscNum;
+        public byte DiscsInSet;
+        public uint SaveGameId;
+
+        public void EndianSwap()
+        {
+            MediaId = MediaId.EndianSwap();
+            VersionBuild = VersionBuild.EndianSwap();
+            BaseVersionBuild = BaseVersionBuild.EndianSwap();
+            TitleId = TitleId.EndianSwap();
+            SaveGameId = SaveGameId.EndianSwap();
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack = 1)]
+    public struct XCONTENT_METADATA
+    {
+        public void EndianSwap()
+        {
+            ContentType = ContentType.EndianSwap();
+            ContentMetadataVersion = ContentMetadataVersion.EndianSwap();
+            ContentSize = ContentSize.EndianSwap();
+            ExecutionId.EndianSwap();
+            Creator = Creator.EndianSwap();
+            StfsVolumeDescriptor.EndianSwap();
+            DataFiles = DataFiles.EndianSwap();
+            DataFilesSize = DataFilesSize.EndianSwap();
+            VolumeType = VolumeType.EndianSwap();
+            OnlineCreator = OnlineCreator.EndianSwap();
+            Category = Category.EndianSwap();
+
+            foreach (var str in DisplayName)
+                str.EndianSwap();
+            foreach (var str in Description)
+                str.EndianSwap();
+            Publisher.EndianSwap();
+            TitleName.EndianSwap();
+
+            ThumbnailSize = ThumbnailSize.EndianSwap();
+            foreach (var str in DisplayNameEx)
+                str.EndianSwap();
+
+            TitleThumbnailSize = TitleThumbnailSize.EndianSwap();
+            foreach (var str in DescriptionEx)
+                str.EndianSwap();
+        }
+        public uint ContentType;
+        public uint ContentMetadataVersion;
+        public ulong ContentSize;
+
+        XEX2_EXECUTION_ID ExecutionId;
+
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 5)]
+        public byte[] ConsoleId;
+        public ulong Creator;
+
+        public STF_VOLUME_DESCRIPTOR StfsVolumeDescriptor;
+        public uint DataFiles;
+        public ulong DataFilesSize;
+        public uint VolumeType;
+
+        public ulong OnlineCreator;
+        public uint Category;
+
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x20)]
+        public byte[] Reserved2;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x24)]
+        public byte[] TypeSpecificData;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x14)]
+        public byte[] DeviceId;
+
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 9)]
+        public UCHAR_80[] DisplayName;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 9)]
+        public UCHAR_80[] Description;
+        public UCHAR_40 Publisher;
+        public UCHAR_40 TitleName;
+
+        public byte FlagsAsBYTE;
+
+        public uint ThumbnailSize;
+        public uint TitleThumbnailSize;
+
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x3D00)]
+        public byte[] Thumbnail;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+        public UCHAR_80[] DisplayNameEx;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x3D00)]
+        public byte[] TitleThumbnail;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+        public UCHAR_80[] DescriptionEx;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    public struct STF_DIRECTORY_ENTRY
+    {
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 40)]
+        public byte[] FileNameBytes;
+        public byte Flags;
+        public byte ValidDataBlocks0;
+        public byte ValidDataBlocks1;
+        public byte ValidDataBlocks2;
+        public byte AllocationBlocks0;
+        public byte AllocationBlocks1;
+        public byte AllocationBlocks2;
+        public byte FirstBlockNumber0;
+        public byte FirstBlockNumber1;
+        public byte FirstBlockNumber2;
+        public short DirectoryIndex;
+        public uint FileSize;
+        public int CreationTimeRaw;
+        public int LastWriteTimeRaw;
+
+        public DateTime CreationTime
+        {
+            get
+            {
+                return StfsFileSystem.StfsDateTime(CreationTimeRaw);
+            }
+        }
+
+        public DateTime LastWriteTime
+        {
+            get
+            {
+                return StfsFileSystem.StfsDateTime(LastWriteTimeRaw);
+            }
+        }
+
+        public byte FileNameLength
+        {
+            get
+            {
+                return (byte)(Flags & 0x3F);
+            }
+            set
+            {
+                Flags = (byte)(value & 0x3F);
+            }
+        }
+
+        public bool IsDirectory
+        {
+            get
+            {
+                return (Flags & 0x80) == 0x80;
+            }
+        }
+
+        public bool IsContiguous
+        {
+            get
+            {
+                return (Flags & 0x40) == 0x40;
+            }
+        }
+
+        public string FileName
+        {
+            get
+            {
+                return Encoding.ASCII.GetString(FileNameBytes, 0, FileNameLength).Trim(new char[] { '\0' });
+            }
+            set
+            {
+                FileNameLength = (byte)value.Length;
+                FileNameBytes = Encoding.ASCII.GetBytes(value);
+                if (FileNameBytes.Length > FileNameLength)
+                    Array.Resize(ref FileNameBytes, FileNameLength);
+            }
+        }
+        public int ValidDataBlocks
+        {
+            get
+            {
+                return ValidDataBlocks0 | (ValidDataBlocks1 << 8) | (ValidDataBlocks2 << 16);
+            }
+        }
+
+        public int AllocationBlocks
+        {
+            get
+            {
+                return AllocationBlocks0 | (AllocationBlocks1 << 8) | (AllocationBlocks2 << 16);
+            }
+        }
+
+        public int FirstBlockNumber
+        {
+            get
+            {
+                return FirstBlockNumber0 | (FirstBlockNumber1 << 8) | (FirstBlockNumber2 << 16);
+            }
+        }
+
+        public bool IsValid
+        {
+            get
+            {
+                return Flags != 0;
+            }
+        }
+
+        public void EndianSwap()
+        {
+            DirectoryIndex = DirectoryIndex.EndianSwap();
+            FileSize = FileSize.EndianSwap();
+            CreationTimeRaw = CreationTimeRaw.EndianSwap();
+            LastWriteTimeRaw = LastWriteTimeRaw.EndianSwap();
+        }
+
+        public override string ToString()
+        {
+            return FileName;
+        }
+    }
+}
