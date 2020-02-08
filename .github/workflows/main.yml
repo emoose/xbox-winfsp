@@ -1,0 +1,27 @@
+name: CI
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+        
+      - name: Build
+        run: |
+          cd "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\MSBuild\Current\Bin\"
+          .\MSBuild.exe $Env:GITHUB_WORKSPACE\xbox-winfsp.sln /p:Configuration=Release
+
+      - name: Prepare artifacts
+        run: |
+          mkdir artifacts
+          cp build/Release/xbox-winfsp.exe build/Release/winfsp-msil.dll dist/_INSTALL.bat dist/_UNINSTALL.bat README.md artifacts
+        shell: bash
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v1
+        with:
+          name: xbox-winfsp.Release
+          path: artifacts

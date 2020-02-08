@@ -22,7 +22,7 @@ namespace XboxWinFsp
 
         long Position = 0;
         long MaxSize = 0;
-        long ClusterCount = 0;
+        long ClusterCount = 0; // is +1 of the actual count, because first cluster is kReservedChainMapEntries..
         long DataAddress = 0;
         uint[] ChainMap;
 
