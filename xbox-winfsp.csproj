@@ -64,6 +64,7 @@
     <Compile Include="FatxFileSystem.cs" />
     <Compile Include="GdfxFileSystem.cs" />
     <Compile Include="Program.cs" />
+    <Compile Include="ReadOnlyFileSystem.cs" />
     <Compile Include="StfsFileSystem.cs" />
     <Compile Include="StfsStructs.cs" />
     <Compile Include="Utility.cs" />

@@ -16,7 +16,7 @@ namespace XboxWinFsp
 
     static class Utility
     {
-        public static long RoundToPages(long number, long pageSize)
+        public static ulong RoundToPages(ulong number, ulong pageSize)
         {
             return ((number + pageSize - 1) / pageSize);
         }

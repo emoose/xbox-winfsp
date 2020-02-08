@@ -1,675 +1,331 @@
 ﻿using System;
-using System.Collections;
+using System.IO;
 using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Runtime.InteropServices;
-using System.IO;
 
 using Fsp;
-using VolumeInfo = Fsp.Interop.VolumeInfo;
-using FileInfo = Fsp.Interop.FileInfo;
-using System.Reflection;
 
 namespace XboxWinFsp
 {
-    public class StfsFileSystem : FileSystemBase
+    public class StfsFileSystem : ReadOnlyFileSystem
     {
-        public const uint kSectorSize = 0x1000;
-
+        public const int kSectorSize = 0x1000;
         static readonly int[] kDataBlocksPerHashLevel = new int[] { 0xAA, 0x70E4, 0x4AF768 };
 
-        string imagePath = "";
-        Stream stream;
-        Object streamLock = new object();
+        XCONTENT_HEADER Header;
+        XCONTENT_METADATA Metadata;
+        STF_VOLUME_DESCRIPTOR StfsVolumeDescriptor;
 
-        SHA1 sha1 = SHA1.Create();
+        PEC_HEADER PecHeader;
+        bool IsXContent = false;
 
-        STF_VOLUME_DESCRIPTOR stfsVolumeDescriptor
-        {
-            get
-            {
-                if (isXContent)
-                    return metadata.StfsVolumeDescriptor;
-                return pecHeader.StfsVolumeDescriptor;
-            }
-        }
+        XE_CONSOLE_SIGNATURE ConsoleSignature;
+        bool IsConsoleSigned = false;
 
-        XE_CONSOLE_SIGNATURE consoleSignature;
-        bool isConsoleSigned = false;
-
-        XCONTENT_HEADER header;
-        XCONTENT_METADATA metadata;
-
-        PEC_HEADER pecHeader;
-        bool isXContent = false;
-
-        StfsEntry[] children; // all files in the package
-        StfsEntry[] rootChildren; // only files that are in the root directory
-        ulong totalBytesInUse = 0;
+        // All files in the package
+        FileEntry[] Children; 
 
         // Values used in some block calculations, inited by StfsInit();
-        long stfsSizeOfHeaders = 0;
-        int stfsBlocksPerHashTable = 1;
-        int[] stfsBlockStep = new[] { 0xAB, 0x718F };
+        long SizeOfHeaders = 0;
+        int BlocksPerHashTable = 1;
+        int[] StfsBlockStep = new[] { 0xAB, 0x718F };
 
         // Cached hash blocks
-        List<long> invalidTables = new List<long>();
-        Dictionary<long, STF_HASH_BLOCK> cachedTables = new Dictionary<long, STF_HASH_BLOCK>();
+        List<long> InvalidTables = new List<long>();
+        Dictionary<long, STF_HASH_BLOCK> CachedTables = new Dictionary<long, STF_HASH_BLOCK>();
 
-        // Info about a file stored inside the STFS image
-        protected class StfsEntry
+        // Misc
+        SHA1 Sha1 = SHA1.Create();
+        object StreamLock = new object();
+
+        public StfsFileSystem(Stream stream, string inputPath) : base(stream, inputPath, kSectorSize)
         {
-            StfsFileSystem fileSystem;
-
-            public STF_DIRECTORY_ENTRY DirEntry;
-            public long DirEntryAddr;
-            public StfsEntry[] Children;
-            public StfsEntry Parent;
-
-            internal int[] BlockChain; // Chain gets read in once a FileDesc is created for the entry
-
-            public Stream FakeData; // Allows us to inject custom data into the filesystem, eg. for a fake metadata.ini file.
-
-            public StfsEntry(StfsFileSystem fileSystem)
-            {
-                this.fileSystem = fileSystem;
-            }
-
-            public bool Read(Stream stream)
-            {
-                DirEntryAddr = stream.Position;
-                DirEntry = stream.ReadStruct<STF_DIRECTORY_ENTRY>();
-                DirEntry.EndianSwap();
-                return DirEntry.IsValid;
-            }
-
-            public override string ToString()
-            {
-                return $"{DirEntry.FileName}" + (Children != null ? $" ({Children.Length} children)" : "");
-            }
         }
 
-        // An open instance of a file
-        protected class FileDesc
+        void StfsInit()
         {
-            StfsFileSystem fileSystem;
-
-            internal StfsEntry FileEntry;
-
-            internal FileDesc(StfsFileSystem fileSystem)
+            PecHeader = Stream.ReadStruct<PEC_HEADER>();
+            PecHeader.EndianSwap();
+            if (PecHeader.ConsoleSignature.IsStructureValid)
             {
-                this.fileSystem = fileSystem;
-            }
-
-            internal FileDesc(StfsEntry entry, StfsFileSystem fileSystem)
-            {
-                FileEntry = entry;
-                this.fileSystem = fileSystem;
-
-                // We'll only fill the block chain once a FileDesc has been created for the file:
-                if (entry != null && entry.FakeData == null)
-                    lock (entry)
-                        if (entry.BlockChain == null)
-                            entry.BlockChain = fileSystem.StfsGetDataBlockChain(entry.DirEntry.FirstBlockNumber);
-            }
-
-            public Int32 GetFileInfo(out FileInfo FileInfo)
-            {
-                FileInfo = new FileInfo();
-                FileInfo.FileAttributes = (uint)FileAttributes.Directory;
-
-                if (FileEntry != null)
-                {
-                    FileInfo.CreationTime = (ulong)FileEntry.DirEntry.CreationTime.ToFileTimeUtc();
-                    FileInfo.LastWriteTime = FileInfo.ChangeTime = (ulong)FileEntry.DirEntry.LastWriteTime.ToFileTimeUtc();
-                    FileInfo.FileSize = FileEntry.DirEntry.FileSize;
-                    FileInfo.AllocationSize = ((FileEntry.DirEntry.FileSize + StfsFileSystem.kSectorSize - 1) / StfsFileSystem.kSectorSize) * StfsFileSystem.kSectorSize;
-                    FileInfo.FileAttributes = FileEntry.DirEntry.IsDirectory ? (uint)FileAttributes.Directory : 0;
-                }
-
-                FileInfo.FileAttributes |= (uint)FileAttributes.ReadOnly;
-
-                return STATUS_SUCCESS;
-            }
-        }
-
-        public StfsFileSystem(string filePath)
-        {
-            imagePath = filePath;
-        }
-
-        public override Boolean ReadDirectoryEntry(
-           Object FileNode,
-           Object FileDesc0,
-           String Pattern,
-           String Marker,
-           ref Object Context,
-           out String FileName,
-           out FileInfo FileInfo)
-        {
-            FileDesc FileDesc = (FileDesc)FileDesc0;
-            IEnumerator<StfsEntry> Enumerator = (IEnumerator<StfsEntry>)Context;
-
-            if (Enumerator == null)
-            {
-                var childArr = rootChildren;
-                if (FileDesc.FileEntry != null)
-                    childArr = FileDesc.FileEntry.Children;
-
-                Enumerator = new List<StfsEntry>(childArr).GetEnumerator();
-                Context = Enumerator;
-                int Index = 0;
-                if (null != Marker)
-                {
-                    var testEntry = new StfsEntry(this);
-                    testEntry.DirEntry.FileName = Marker;
-                    Index = Array.BinarySearch(childArr, testEntry, _DirectoryEntryComparer);
-                    if (0 <= Index)
-                        Index++;
-                    else
-                        Index = ~Index;
-                }
-
-                if (Index > 0)
-                    for (int i = 0; i < Index; i++)
-                        Enumerator.MoveNext();
-            }
-
-            if (Enumerator.MoveNext())
-            {
-                var entry = Enumerator.Current;
-                FileName = entry.DirEntry.FileName;
-                var desc = new FileDesc(entry, this);
-                desc.GetFileInfo(out FileInfo);
-                return true;
+                IsXContent = false;
+                IsConsoleSigned = true;
+                ConsoleSignature = PecHeader.ConsoleSignature;
+                StfsVolumeDescriptor = PecHeader.StfsVolumeDescriptor;
             }
             else
             {
-                FileName = default;
-                FileInfo = default;
-                return false;
-            }
-        }
+                IsXContent = true;
+                Stream.Seek(0, SeekOrigin.Begin);
 
-        public override Int32 GetSecurityByName(
-            String FileName,
-            out UInt32 FileAttributes1/* or ReparsePointIndex */,
-            ref Byte[] SecurityDescriptor)
-        {
-            FileAttributes1 = 0;
-            if (FileName == "\\")
-                FileAttributes1 = (uint)FileAttributes.Directory;
-            else
-            {
-                var entryIdx = StfsFindFile(FileName);
-                if (entryIdx != -1)
-                    FileAttributes1 = children[entryIdx].DirEntry.IsDirectory ? (uint)FileAttributes.Directory : 0;
-                else
-                    return STATUS_NO_SUCH_FILE;
-            }
-            return STATUS_SUCCESS;
-        }
+                Header = Stream.ReadStruct<XCONTENT_HEADER>();
+                Header.EndianSwap();
 
-        public override Int32 Open(
-            String FileName,
-            UInt32 CreateOptions,
-            UInt32 GrantedAccess,
-            out Object FileNode,
-            out Object FileDesc0,
-            out FileInfo FileInfo,
-            out String NormalizedName)
-        {
-            FileNode = default;
-            NormalizedName = default;
+                if (Header.SignatureType != XCONTENT_HEADER.kSignatureTypeConBE &&
+                    Header.SignatureType != XCONTENT_HEADER.kSignatureTypeLiveBE &&
+                    Header.SignatureType != XCONTENT_HEADER.kSignatureTypePirsBE)
+                    throw new FileSystemParseException("File has invalid header magic");
 
-            if (string.IsNullOrEmpty(FileName) || FileName == "\\")
-            {
-                // No file path? Return some info about the root dir..
-                var fileDesc = new FileDesc(this);
-                FileDesc0 = fileDesc;
-                return fileDesc.GetFileInfo(out FileInfo);
-            }
+                if (Header.SizeOfHeaders == 0)
+                    throw new FileSystemParseException("Package doesn't contain STFS filesystem");
 
-            short foundEntry = StfsFindFile(FileName);
-
-            if (foundEntry == -1)
-            {
-                FileInfo = default;
-                FileDesc0 = null;
-                return STATUS_NO_SUCH_FILE;
-            }
-
-            var ent = children[foundEntry];
-
-            var fileDesc2 = new FileDesc(ent, this);
-            FileDesc0 = fileDesc2;
-            return fileDesc2.GetFileInfo(out FileInfo);
-        }
-
-        public override Int32 Read(
-            Object FileNode,
-            Object FileDesc0,
-            IntPtr Buffer,
-            UInt64 Offset,
-            UInt32 Length,
-            out UInt32 PBytesTransferred)
-        {
-            FileDesc FileDesc = (FileDesc)FileDesc0;
-            if (Offset >= (UInt64)FileDesc.FileEntry.DirEntry.FileSize)
-            {
-                PBytesTransferred = 0;
-                return STATUS_END_OF_FILE;
-            }
-            if (Offset + Length >= (UInt64)FileDesc.FileEntry.DirEntry.FileSize)
-            {
-                Length = (uint)(FileDesc.FileEntry.DirEntry.FileSize - Offset);
-            }
-
-            if (FileDesc.FileEntry.FakeData != null)
-            {
-                byte[] bytes2 = new byte[Length];
-                lock (FileDesc.FileEntry.FakeData)
+                if (Header.SignatureType == XCONTENT_HEADER.kSignatureTypeConBE)
                 {
-                    FileDesc.FileEntry.FakeData.Seek((long)Offset, SeekOrigin.Begin);
-                    PBytesTransferred = (uint)FileDesc.FileEntry.FakeData.Read(bytes2, 0, bytes2.Length);
-                }
-                Marshal.Copy(bytes2, 0, Buffer, (int)PBytesTransferred);
-                return STATUS_SUCCESS;
-            }
-
-            uint numBlocks = (Length + kSectorSize - 1) / kSectorSize;
-            uint chainNum = (uint)(Offset / kSectorSize);
-            uint blockOffset = (uint)(Offset % kSectorSize);
-
-            uint blockRemaining = kSectorSize - blockOffset;
-            uint lengthRemaining = Length;
-            uint transferred = 0;
-
-            byte[] bytes = new byte[kSectorSize];
-            while (lengthRemaining > 0)
-            {
-                var blockNum = FileDesc.FileEntry.BlockChain[chainNum];
-
-                uint toRead = blockRemaining;
-                if (toRead > lengthRemaining)
-                    toRead = lengthRemaining;
-
-                int read = 0;
-                lock (streamLock)
-                {
-                    stream.Seek((long)StfsDataBlockToOffset(blockNum) + blockOffset, SeekOrigin.Begin);
-                    read = stream.Read(bytes, 0, (int)toRead);
+                    IsConsoleSigned = true;
+                    ConsoleSignature = Header.ConsoleSignature;
                 }
 
-                Marshal.Copy(bytes, 0, Buffer, read);
-                transferred += (uint)read;
+                Stream.Position = 0x344;
+                Metadata = Stream.ReadStruct<XCONTENT_METADATA>();
+                Metadata.EndianSwap();
 
-                if (blockOffset + read >= kSectorSize)
-                    chainNum++;
+                if (Metadata.VolumeType != 0)
+                    throw new FileSystemParseException("Package contains unsupported SVOD filesystem");
 
-                Buffer += read;
-                blockRemaining = kSectorSize;
-                blockOffset = 0;
-                lengthRemaining -= (uint)read;
-            }
-            PBytesTransferred = transferred;
-
-            return STATUS_SUCCESS;
-        }
-
-        public override Int32 GetFileInfo(
-            Object FileNode,
-            Object FileDesc0,
-            out FileInfo FileInfo)
-        {
-            FileDesc FileDesc = (FileDesc)FileDesc0;
-            return FileDesc.GetFileInfo(out FileInfo);
-        }
-
-        public override Int32 GetVolumeInfo(out VolumeInfo VolumeInfo)
-        {
-            VolumeInfo = default;
-            VolumeInfo.FreeSize = 0;
-            VolumeInfo.TotalSize = totalBytesInUse;
-
-            bool setDefault = !isXContent;
-            if (isXContent)
-            {
-                if (!string.IsNullOrEmpty(metadata.DisplayName[0].String))
-                    VolumeInfo.SetVolumeLabel(metadata.DisplayName[0].String);
-                else if (!string.IsNullOrEmpty(metadata.TitleName.String))
-                    VolumeInfo.SetVolumeLabel(metadata.TitleName.String);
-                else
-                    setDefault = true;
+                StfsVolumeDescriptor = Metadata.StfsVolumeDescriptor;
             }
 
-            if (setDefault)
-                VolumeInfo.SetVolumeLabel(Path.GetFileName(imagePath));
+            if (StfsVolumeDescriptor.DescriptorLength != 0x24)
+                throw new FileSystemParseException("File has invalid descriptor length");
 
-            return STATUS_SUCCESS;
-        }
+            StfsInitValues();
 
-        public override Int32 Init(Object Host0)
-        {
-            try
+            // Read in our directory entries...
+
+            int directoryBlock = StfsVolumeDescriptor.DirectoryFirstBlockNumber;
+            var entries = new List<FileEntry>();
+            for (int i = 0; i < StfsVolumeDescriptor.DirectoryAllocationBlocks; i++)
             {
-                stream = File.OpenRead(imagePath);
-                if (stream == null)
-                    throw new FileSystemParseException("Failed to open file for reading");
-
-                pecHeader = stream.ReadStruct<PEC_HEADER>();
-                pecHeader.EndianSwap();
-                if (pecHeader.ConsoleSignature.IsStructureValid)
+                if (directoryBlock == 0xFFFFFF)
                 {
-                    isXContent = false;
-                    isConsoleSigned = true;
-                    consoleSignature = pecHeader.ConsoleSignature;
+                    Console.WriteLine("Premature directory exit 1!!!");
+                    break;
                 }
-                else
+
+                Stream.Position = StfsDataBlockToOffset(directoryBlock);
+
+                bool noMoreEntries = false;
+                for (int ent = 0; ent < (0x1000 / 0x40); ent++)
                 {
-                    isXContent = true;
-                    stream.Seek(0, SeekOrigin.Begin);
-
-                    header = stream.ReadStruct<XCONTENT_HEADER>();
-                    header.EndianSwap();
-
-                    if (header.SignatureType != XCONTENT_HEADER.kSignatureTypeConBE &&
-                        header.SignatureType != XCONTENT_HEADER.kSignatureTypeLiveBE &&
-                        header.SignatureType != XCONTENT_HEADER.kSignatureTypePirsBE)
-                        throw new FileSystemParseException("File has invalid header magic");
-
-                    if (header.SizeOfHeaders == 0)
-                        throw new FileSystemParseException("Package doesn't contain STFS filesystem");
-
-                    if (header.SignatureType == XCONTENT_HEADER.kSignatureTypeConBE)
+                    var entry = new FileEntry(this);
+                    if (!entry.Read(Stream))
                     {
-                        isConsoleSigned = true;
-                        consoleSignature = header.ConsoleSignature;
-                    }
-
-                    stream.Position = 0x344;
-                    metadata = stream.ReadStruct<XCONTENT_METADATA>();
-                    metadata.EndianSwap();
-
-                    if (metadata.VolumeType != 0)
-                        throw new FileSystemParseException("Package contains unsupported SVOD filesystem");
-                }
-
-                if (stfsVolumeDescriptor.DescriptorLength != 0x24)
-                    throw new FileSystemParseException("File has invalid descriptor length");
-
-                StfsInit();
-
-                int directoryBlock = stfsVolumeDescriptor.DirectoryFirstBlockNumber;
-                var entries = new List<StfsEntry>();
-                for (int i = 0; i < stfsVolumeDescriptor.DirectoryAllocationBlocks; i++)
-                {
-                    if (directoryBlock == 0xFFFFFF)
-                    {
-                        Console.WriteLine("Premature directory exit 1!!!");
+                        noMoreEntries = true;
                         break;
                     }
-
-                    stream.Position = StfsDataBlockToOffset(directoryBlock);
-
-                    bool noMoreEntries = false;
-                    for (int ent = 0; ent < (0x1000 / 0x40); ent++)
-                    {
-                        StfsEntry entry = new StfsEntry(this);
-                        if (!entry.Read(stream))
-                        {
-                            noMoreEntries = true;
-                            break;
-                        }
-                        totalBytesInUse += entry.DirEntry.FileSize;
-                        entries.Add(entry);
-                    }
-
-
-                    // Find next directory block...
-                    var blockHashEntry = StfsGetLevel0HashEntry(directoryBlock);
-                    directoryBlock = blockHashEntry.Level0NextBlock;
-
-                    if (noMoreEntries)
-                    {
-                        if (i + 1 < stfsVolumeDescriptor.DirectoryAllocationBlocks)
-                            Console.WriteLine("Premature directory exit 2!!!");
-                        break;
-                    }
+                    TotalBytesInUse += entry.DirEntry.FileSize;
+                    entries.Add(entry);
                 }
 
-                InitMetadataFiles(ref entries);
 
-                // Connect entries up with their parents/children
-                var rootEntries = new List<StfsEntry>();
-                for (int i = 0; i < entries.Count; i++)
+                // Find next directory block...
+                var blockHashEntry = StfsGetLevel0HashEntry(directoryBlock);
+                directoryBlock = blockHashEntry.Level0NextBlock;
+
+                if (noMoreEntries)
                 {
-                    var dir = entries[i];
-                    if (dir.DirEntry.DirectoryIndex == -1)
-                        rootEntries.Add(dir);
-
-                    if (!dir.DirEntry.IsDirectory)
-                        continue;
-
-                    var children = new List<StfsEntry>();
-                    foreach (var ent in entries)
-                        if (ent.DirEntry.DirectoryIndex == i)
-                        {
-                            children.Add(ent);
-                            ent.Parent = dir;
-                        }
-
-                    children.Sort((x, y) => x.DirEntry.FileName.CompareTo(y.DirEntry.FileName));
-                    dir.Children = children.ToArray();
+                    if (i + 1 < StfsVolumeDescriptor.DirectoryAllocationBlocks)
+                        Console.WriteLine("Premature directory exit 2!!!");
+                    break;
                 }
-                // Make sure to sort so that ReadDirectoryEntry doesn't make windows loop forever...
-                rootEntries.Sort((x, y) => x.DirEntry.FileName.CompareTo(y.DirEntry.FileName));
-
-                children = entries.ToArray();
-                rootChildren = rootEntries.ToArray();
-
-                FileSystemHost Host = (FileSystemHost)Host0;
-                Host.SectorSize = (ushort)kSectorSize;
-                Host.SectorsPerAllocationUnit = 1;
-                Host.MaxComponentLength = 255;
-                Host.FileInfoTimeout = 1000;
-                Host.CaseSensitiveSearch = false;
-                Host.CasePreservedNames = true;
-                Host.UnicodeOnDisk = true;
-                Host.PersistentAcls = false;
-                Host.PassQueryDirectoryPattern = true;
-                Host.FlushAndPurgeOnCleanup = true;
-                Host.VolumeCreationTime = 0;
-                if (isXContent)
-                {
-                    Host.VolumeSerialNumber = BitConverter.ToUInt32(header.ContentId, 0);
-                    Host.FileSystemName = $"STFS ({header.SignatureTypeString})";
-                }
-                else
-                {
-                    Host.VolumeSerialNumber = BitConverter.ToUInt32(pecHeader.ContentId, 0);
-                    Host.FileSystemName = $"STFS (PEC)";
-                }
-
-                // Hack for us to set ReadOnlyVolume flag...
-                var paramsField = Host.GetType().GetField("_VolumeParams", BindingFlags.NonPublic | BindingFlags.Instance);
-                object paramsVal = paramsField.GetValue(Host);
-                var flagsField = paramsVal.GetType().GetField("Flags", BindingFlags.NonPublic | BindingFlags.Instance);
-                uint value = (uint)flagsField.GetValue(paramsVal);
-                flagsField.SetValue(paramsVal, value | 0x200);
-                paramsField.SetValue(Host, paramsVal);
-
-                return STATUS_SUCCESS;
             }
-            catch(FileSystemParseException e)
+
+            // Create metadata.ini/metadata_thumbnail/etc..
+            InitMetadataFiles(ref entries);
+
+            // Connect entries up with their parents/children
+            var rootEntries = new List<IFileEntry>();
+            for (int i = 0; i < entries.Count; i++)
             {
-                stream.Close();
-                return STATUS_OPEN_FAILED;
+                var ent = entries[i];
+                if (ent.DirEntry.DirectoryIndex == -1)
+                    rootEntries.Add(ent);
+
+                if (!ent.IsDirectory)
+                    continue;
+
+                var children = new List<IFileEntry>();
+                foreach (var ent2 in entries)
+                    if (ent2.DirEntry.DirectoryIndex == i)
+                    {
+                        children.Add(ent2);
+                        ent2.Parent = ent;
+                    }
+
+                children.Sort((x, y) => x.Name.CompareTo(y.Name));
+                ent.Children = children;
             }
+
+            // Make sure to sort so that ReadDirectoryEntry doesn't make windows loop forever...
+            rootEntries.Sort((x, y) => x.Name.CompareTo(y.Name));
+
+            Children = entries.ToArray();
+            RootFiles = rootEntries;
         }
 
-        // Create some fake metadata entries at root of FS
-        void InitMetadataFiles(ref List<StfsEntry> entries)
+        // Creates some fake metadata entries at root of FS
+        void InitMetadataFiles(ref List<FileEntry> entries)
         {
             // metadata.ini
-            var fakeEntry = new StfsEntry(this);
+            var fakeEntry = new FileEntry(this);
             fakeEntry.DirEntry.FileName = "metadata.ini";
             fakeEntry.DirEntry.DirectoryIndex = -1;
             fakeEntry.FakeData = new MemoryStream();
             var writer = new StreamWriter(fakeEntry.FakeData);
-            if (isConsoleSigned)
+            if (IsConsoleSigned)
             {
                 writer.WriteLine("[ConsoleSignature]");
-                writer.WriteLine($"ConsoleId = {BitConverter.ToString(consoleSignature.Cert.ConsoleId)}");
-                writer.WriteLine($"ConsolePartNumber = {consoleSignature.Cert.ConsolePartNumber}");
-                writer.WriteLine($"Privileges = 0x{consoleSignature.Cert.Privileges:X}");
-                writer.WriteLine($"ConsoleType = 0x{consoleSignature.Cert.ConsoleType:X8} ({consoleSignature.Cert.ConsoleTypeString})");
-                writer.WriteLine($"ManufacturingDate = {consoleSignature.Cert.ManufacturingDate}");
+                writer.WriteLine($"ConsoleId = {BitConverter.ToString(ConsoleSignature.Cert.ConsoleId)}");
+                writer.WriteLine($"ConsolePartNumber = {ConsoleSignature.Cert.ConsolePartNumber}");
+                writer.WriteLine($"Privileges = 0x{ConsoleSignature.Cert.Privileges:X}");
+                writer.WriteLine($"ConsoleType = 0x{ConsoleSignature.Cert.ConsoleType:X8} ({ConsoleSignature.Cert.ConsoleTypeString})");
+                writer.WriteLine($"ManufacturingDate = {ConsoleSignature.Cert.ManufacturingDate}");
 
                 writer.WriteLine();
             }
-            if (isXContent)
+            if (IsXContent)
             {
                 writer.WriteLine("[ExecutionId]");
 
-                if (metadata.ExecutionId.MediaId != 0)
-                    writer.WriteLine($"MediaId = 0x{metadata.ExecutionId.MediaId:X8}");
+                if (Metadata.ExecutionId.MediaId != 0)
+                    writer.WriteLine($"MediaId = 0x{Metadata.ExecutionId.MediaId:X8}");
 
-                if (metadata.ExecutionId.Version != "0.0.0.0")
-                    writer.WriteLine($"Version = v{metadata.ExecutionId.Version}");
-                if (metadata.ExecutionId.BaseVersion != "0.0.0.0")
-                    writer.WriteLine($"BaseVersion = v{metadata.ExecutionId.BaseVersion}");
-                if (metadata.ExecutionId.TitleId != 0)
-                    writer.WriteLine($"TitleId = 0x{metadata.ExecutionId.TitleId:X8}");
-                writer.WriteLine($"Platform = {metadata.ExecutionId.Platform}");
-                writer.WriteLine($"ExecutableType = {metadata.ExecutionId.ExecutableType}");
-                writer.WriteLine($"DiscNum = {metadata.ExecutionId.DiscNum}");
-                writer.WriteLine($"DiscsInSet = {metadata.ExecutionId.DiscsInSet}");
-                if (metadata.ExecutionId.SaveGameId != 0)
-                    writer.WriteLine($"SaveGameId = 0x{metadata.ExecutionId.SaveGameId:X8}");
+                if (Metadata.ExecutionId.Version != "0.0.0.0")
+                    writer.WriteLine($"Version = v{Metadata.ExecutionId.Version}");
+                if (Metadata.ExecutionId.BaseVersion != "0.0.0.0")
+                    writer.WriteLine($"BaseVersion = v{Metadata.ExecutionId.BaseVersion}");
+                if (Metadata.ExecutionId.TitleId != 0)
+                    writer.WriteLine($"TitleId = 0x{Metadata.ExecutionId.TitleId:X8}");
+                writer.WriteLine($"Platform = {Metadata.ExecutionId.Platform}");
+                writer.WriteLine($"ExecutableType = {Metadata.ExecutionId.ExecutableType}");
+                writer.WriteLine($"DiscNum = {Metadata.ExecutionId.DiscNum}");
+                writer.WriteLine($"DiscsInSet = {Metadata.ExecutionId.DiscsInSet}");
+                if (Metadata.ExecutionId.SaveGameId != 0)
+                    writer.WriteLine($"SaveGameId = 0x{Metadata.ExecutionId.SaveGameId:X8}");
 
                 writer.WriteLine();
                 writer.WriteLine("[XContentHeader]");
-                writer.WriteLine($"SignatureType = {header.SignatureTypeString}");
-                writer.WriteLine($"ContentId = {BitConverter.ToString(header.ContentId)}");
-                writer.WriteLine($"SizeOfHeaders = 0x{header.SizeOfHeaders:X}");
+                writer.WriteLine($"SignatureType = {Header.SignatureTypeString}");
+                writer.WriteLine($"ContentId = {BitConverter.ToString(Header.ContentId)}");
+                writer.WriteLine($"SizeOfHeaders = 0x{Header.SizeOfHeaders:X}");
 
                 writer.WriteLine();
                 writer.WriteLine("[XContentMetadata]");
-                writer.WriteLine($"ContentType = 0x{metadata.ContentType:X8}");
-                writer.WriteLine($"ContentMetadataVersion = {metadata.ContentMetadataVersion}");
-                writer.WriteLine($"ContentSize = 0x{metadata.ContentSize:X}");
-                if (!metadata.ConsoleId.IsNull())
-                    writer.WriteLine($"ConsoleId = {BitConverter.ToString(metadata.ConsoleId)}");
-                if (metadata.Creator != 0)
-                    writer.WriteLine($"Creator = 0x{metadata.Creator:X16}");
-                if (metadata.OnlineCreator != 0)
-                    writer.WriteLine($"OnlineCreator = 0x{metadata.OnlineCreator:X16}");
-                if (metadata.Category != 0)
-                    writer.WriteLine($"Category = {metadata.Category}");
-                if (!metadata.DeviceId.IsNull())
-                    writer.WriteLine($"DeviceId = {BitConverter.ToString(metadata.DeviceId)}");
+                writer.WriteLine($"ContentType = 0x{Metadata.ContentType:X8}");
+                writer.WriteLine($"ContentMetadataVersion = {Metadata.ContentMetadataVersion}");
+                writer.WriteLine($"ContentSize = 0x{Metadata.ContentSize:X}");
+                if (!Metadata.ConsoleId.IsNull())
+                    writer.WriteLine($"ConsoleId = {BitConverter.ToString(Metadata.ConsoleId)}");
+                if (Metadata.Creator != 0)
+                    writer.WriteLine($"Creator = 0x{Metadata.Creator:X16}");
+                if (Metadata.OnlineCreator != 0)
+                    writer.WriteLine($"OnlineCreator = 0x{Metadata.OnlineCreator:X16}");
+                if (Metadata.Category != 0)
+                    writer.WriteLine($"Category = {Metadata.Category}");
+                if (!Metadata.DeviceId.IsNull())
+                    writer.WriteLine($"DeviceId = {BitConverter.ToString(Metadata.DeviceId)}");
                 for (int i = 0; i < 9; i++)
-                    if (!string.IsNullOrEmpty(metadata.DisplayName[i].String))
-                        writer.WriteLine($"DisplayName[{i}] = {metadata.DisplayName[i].String}");
-                if (metadata.ContentMetadataVersion >= 2)
+                    if (!string.IsNullOrEmpty(Metadata.DisplayName[i].String))
+                        writer.WriteLine($"DisplayName[{i}] = {Metadata.DisplayName[i].String}");
+                if (Metadata.ContentMetadataVersion >= 2)
                     for (int i = 0; i < 3; i++)
-                        if (!string.IsNullOrEmpty(metadata.DisplayNameEx[i].String))
-                            writer.WriteLine($"DisplayNameEx[{i}] = {metadata.DisplayNameEx[i].String}");
+                        if (!string.IsNullOrEmpty(Metadata.DisplayNameEx[i].String))
+                            writer.WriteLine($"DisplayNameEx[{i}] = {Metadata.DisplayNameEx[i].String}");
                 for (int i = 0; i < 9; i++)
-                    if (!string.IsNullOrEmpty(metadata.Description[i].String))
-                        writer.WriteLine($"Description[{i}] = {metadata.Description[i].String}");
-                if (metadata.ContentMetadataVersion >= 2)
+                    if (!string.IsNullOrEmpty(Metadata.Description[i].String))
+                        writer.WriteLine($"Description[{i}] = {Metadata.Description[i].String}");
+                if (Metadata.ContentMetadataVersion >= 2)
                     for (int i = 0; i < 3; i++)
-                        if (!string.IsNullOrEmpty(metadata.DescriptionEx[i].String))
-                            writer.WriteLine($"DescriptionEx[{i}] = {metadata.DescriptionEx[i].String}");
-                if (!string.IsNullOrEmpty(metadata.Publisher.String))
-                    writer.WriteLine($"Publisher = {metadata.Publisher.String}");
-                if (!string.IsNullOrEmpty(metadata.TitleName.String))
-                    writer.WriteLine($"TitleName = {metadata.TitleName.String}");
+                        if (!string.IsNullOrEmpty(Metadata.DescriptionEx[i].String))
+                            writer.WriteLine($"DescriptionEx[{i}] = {Metadata.DescriptionEx[i].String}");
+                if (!string.IsNullOrEmpty(Metadata.Publisher.String))
+                    writer.WriteLine($"Publisher = {Metadata.Publisher.String}");
+                if (!string.IsNullOrEmpty(Metadata.TitleName.String))
+                    writer.WriteLine($"TitleName = {Metadata.TitleName.String}");
 
-                if (metadata.FlagsAsBYTE != 0)
-                    writer.WriteLine($"Flags = 0x{metadata.FlagsAsBYTE:X2}");
+                if (Metadata.FlagsAsBYTE != 0)
+                    writer.WriteLine($"Flags = 0x{Metadata.FlagsAsBYTE:X2}");
 
-                writer.WriteLine($"ThumbnailSize = 0x{metadata.ThumbnailSize:X}");
-                writer.WriteLine($"TitleThumbnailSize = 0x{metadata.TitleThumbnailSize:X}");
+                writer.WriteLine($"ThumbnailSize = 0x{Metadata.ThumbnailSize:X}");
+                writer.WriteLine($"TitleThumbnailSize = 0x{Metadata.TitleThumbnailSize:X}");
             }
             else
             {
                 writer.WriteLine("[PECHeader]");
-                writer.WriteLine($"ContentId = {BitConverter.ToString(pecHeader.ContentId)}");
-                if (pecHeader.Unknown != 0)
-                    writer.WriteLine($"Unknown = 0x{pecHeader.Unknown:X16}");
-                if (pecHeader.Unknown2 != 0)
-                    writer.WriteLine($"Unknown2 = 0x{pecHeader.Unknown2:X8}");
-                if (pecHeader.Creator != 0)
-                    writer.WriteLine($"Creator = 0x{pecHeader.Creator:X16}");
-                if (pecHeader.ConsoleIdsCount != 0)
-                    writer.WriteLine($"ConsoleIdsCount = {pecHeader.ConsoleIdsCount}");
+                writer.WriteLine($"ContentId = {BitConverter.ToString(PecHeader.ContentId)}");
+                if (PecHeader.Unknown != 0)
+                    writer.WriteLine($"Unknown = 0x{PecHeader.Unknown:X16}");
+                if (PecHeader.Unknown2 != 0)
+                    writer.WriteLine($"Unknown2 = 0x{PecHeader.Unknown2:X8}");
+                if (PecHeader.Creator != 0)
+                    writer.WriteLine($"Creator = 0x{PecHeader.Creator:X16}");
+                if (PecHeader.ConsoleIdsCount != 0)
+                    writer.WriteLine($"ConsoleIdsCount = {PecHeader.ConsoleIdsCount}");
                 for (int i = 0; i < 100; i++)
-                    if (!pecHeader.ConsoleIds[i].Bytes.IsNull())
-                        writer.WriteLine($"ConsoleId[{i}] = {BitConverter.ToString(pecHeader.ConsoleIds[i].Bytes)}");
+                    if (!PecHeader.ConsoleIds[i].Bytes.IsNull())
+                        writer.WriteLine($"ConsoleId[{i}] = {BitConverter.ToString(PecHeader.ConsoleIds[i].Bytes)}");
             }
 
             writer.WriteLine();
             writer.WriteLine("[VolumeDescriptor]");
-            string volumeType = (!isXContent || metadata.VolumeType == 0) ? "STFS" : "SVOD";
-            if (isXContent)
+            string volumeType = (!IsXContent || Metadata.VolumeType == 0) ? "STFS" : "SVOD";
+            if (IsXContent)
             {
-                writer.WriteLine($"VolumeType = {metadata.VolumeType} ({volumeType})");
-                if (metadata.DataFiles != 0)
-                    writer.WriteLine($"DataFiles = {metadata.DataFiles}");
-                if (metadata.DataFilesSize != 0)
-                    writer.WriteLine($"DataFilesSize = 0x{metadata.DataFilesSize:X}");
+                writer.WriteLine($"VolumeType = {Metadata.VolumeType} ({volumeType})");
+                if (Metadata.DataFiles != 0)
+                    writer.WriteLine($"DataFiles = {Metadata.DataFiles}");
+                if (Metadata.DataFilesSize != 0)
+                    writer.WriteLine($"DataFilesSize = 0x{Metadata.DataFilesSize:X}");
             }
-            if (!isXContent || metadata.VolumeType == 0)
+            if (!IsXContent || Metadata.VolumeType == 0)
             {
                 string flags = "";
-                if (stfsVolumeDescriptor.ReadOnlyFormat)
+                if (StfsVolumeDescriptor.ReadOnlyFormat)
                     flags += "(ReadOnlyFormat) ";
-                if (stfsVolumeDescriptor.RootActiveIndex)
+                if (StfsVolumeDescriptor.RootActiveIndex)
                     flags += "(RootActiveIndex) ";
-                writer.WriteLine($"Stfs.DescriptorLength = 0x{stfsVolumeDescriptor.DescriptorLength:X}");
-                writer.WriteLine($"Stfs.Version = {stfsVolumeDescriptor.Version}");
-                writer.WriteLine($"Stfs.Flags = {stfsVolumeDescriptor.Flags} {flags}");
-                writer.WriteLine($"Stfs.DirectoryAllocationBlocks = 0x{stfsVolumeDescriptor.DirectoryAllocationBlocks:X}");
-                writer.WriteLine($"Stfs.DirectoryFirstBlockNumber = 0x{stfsVolumeDescriptor.DirectoryFirstBlockNumber:X}");
-                writer.WriteLine($"Stfs.RootHash = {BitConverter.ToString(stfsVolumeDescriptor.RootHash)}");
-                writer.WriteLine($"Stfs.NumberOfTotalBlocks = 0x{stfsVolumeDescriptor.NumberOfTotalBlocks:X}");
-                writer.WriteLine($"Stfs.NumberOfFreeBlocks = 0x{stfsVolumeDescriptor.NumberOfFreeBlocks:X}");
+                writer.WriteLine($"Stfs.DescriptorLength = 0x{StfsVolumeDescriptor.DescriptorLength:X}");
+                writer.WriteLine($"Stfs.Version = {StfsVolumeDescriptor.Version}");
+                writer.WriteLine($"Stfs.Flags = {StfsVolumeDescriptor.Flags} {flags}");
+                writer.WriteLine($"Stfs.DirectoryAllocationBlocks = 0x{StfsVolumeDescriptor.DirectoryAllocationBlocks:X}");
+                writer.WriteLine($"Stfs.DirectoryFirstBlockNumber = 0x{StfsVolumeDescriptor.DirectoryFirstBlockNumber:X}");
+                writer.WriteLine($"Stfs.RootHash = {BitConverter.ToString(StfsVolumeDescriptor.RootHash)}");
+                writer.WriteLine($"Stfs.NumberOfTotalBlocks = 0x{StfsVolumeDescriptor.NumberOfTotalBlocks:X}");
+                writer.WriteLine($"Stfs.NumberOfFreeBlocks = 0x{StfsVolumeDescriptor.NumberOfFreeBlocks:X}");
             }
             writer.Flush();
 
             fakeEntry.DirEntry.FileSize = (uint)fakeEntry.FakeData.Length;
             entries.Add(fakeEntry);
 
-            if (isXContent)
+            if (IsXContent)
             {
                 // metadata_thumbnail.png
-                if (metadata.ThumbnailSize > 0)
+                if (Metadata.ThumbnailSize > 0)
                 {
                     // Don't read more than 0x3D00 bytes - some older ones can be 0x4000, but too bad for them
-                    var thumbSize = Math.Min(metadata.ThumbnailSize, 0x3D00);
-                    var thumbEntry = new StfsEntry(this);
+                    var thumbSize = Math.Min(Metadata.ThumbnailSize, 0x3D00);
+                    var thumbEntry = new FileEntry(this);
                     thumbEntry.DirEntry.FileName = "metadata_thumbnail.png";
                     thumbEntry.DirEntry.DirectoryIndex = -1;
                     thumbEntry.FakeData = new MemoryStream();
-                    thumbEntry.FakeData.Write(metadata.Thumbnail, 0, (int)thumbSize);
+                    thumbEntry.FakeData.Write(Metadata.Thumbnail, 0, (int)thumbSize);
                     thumbEntry.FakeData.Flush();
                     thumbEntry.DirEntry.FileSize = (uint)thumbEntry.FakeData.Length;
                     entries.Add(thumbEntry);
                 }
 
                 // metadata_thumbnail_title.png
-                if (metadata.TitleThumbnailSize > 0)
+                if (Metadata.TitleThumbnailSize > 0)
                 {
                     // Don't read more than 0x3D00 bytes - some older ones can be 0x4000, but too bad for them
-                    var thumbSize = Math.Min(metadata.TitleThumbnailSize, 0x3D00);
-                    var thumbEntry = new StfsEntry(this);
+                    var thumbSize = Math.Min(Metadata.TitleThumbnailSize, 0x3D00);
+                    var thumbEntry = new FileEntry(this);
                     thumbEntry.DirEntry.FileName = "metadata_thumbnail_title.png";
                     thumbEntry.DirEntry.DirectoryIndex = -1;
                     thumbEntry.FakeData = new MemoryStream();
-                    thumbEntry.FakeData.Write(metadata.TitleThumbnail, 0, (int)thumbSize);
+                    thumbEntry.FakeData.Write(Metadata.TitleThumbnail, 0, (int)thumbSize);
                     thumbEntry.FakeData.Flush();
                     thumbEntry.DirEntry.FileSize = (uint)thumbEntry.FakeData.Length;
                     entries.Add(thumbEntry);
@@ -677,22 +333,22 @@ namespace XboxWinFsp
             }
         }
 
-        void StfsInit()
+        // Precalculates some things
+        void StfsInitValues()
         {
-            // Precalculate some things
-            if (isXContent)
-                stfsSizeOfHeaders = ((header.SizeOfHeaders + kSectorSize - 1) / kSectorSize) * kSectorSize;
+            if (IsXContent)
+                SizeOfHeaders = ((Header.SizeOfHeaders + kSectorSize - 1) / kSectorSize) * kSectorSize;
             else
-                stfsSizeOfHeaders = 0x1000; // PEC
+                SizeOfHeaders = 0x1000; // PEC
 
-            stfsBlocksPerHashTable = 1;
-            stfsBlockStep[0] = 0xAB;
-            stfsBlockStep[1] = 0x718F;
-            if (!stfsVolumeDescriptor.ReadOnlyFormat)
+            BlocksPerHashTable = 1;
+            StfsBlockStep[0] = 0xAB;
+            StfsBlockStep[1] = 0x718F;
+            if (!StfsVolumeDescriptor.ReadOnlyFormat)
             {
-                stfsBlocksPerHashTable = 2;
-                stfsBlockStep[0] = 0xAC;
-                stfsBlockStep[1] = 0x723A;
+                BlocksPerHashTable = 2;
+                StfsBlockStep[0] = 0xAC;
+                StfsBlockStep[1] = 0x723A;
             }
         }
 
@@ -703,7 +359,7 @@ namespace XboxWinFsp
 
             for (int i = 0; i < 3; i++)
             {
-                block += stfsBlocksPerHashTable * ((BlockNumber + blockBase) / blockBase);
+                block += BlocksPerHashTable * ((BlockNumber + blockBase) / blockBase);
                 if (BlockNumber < blockBase)
                     break;
 
@@ -718,30 +374,30 @@ namespace XboxWinFsp
             int num = 0;
             if (level == 0)
             {
-                num = (blockNum / 0xAA) * stfsBlockStep[0];
+                num = (blockNum / 0xAA) * StfsBlockStep[0];
                 if (blockNum / 0xAA == 0)
                     return num;
 
-                num = num + ((blockNum / 0x70E4) + 1) * stfsBlocksPerHashTable;
+                num = num + ((blockNum / 0x70E4) + 1) * BlocksPerHashTable;
                 if (blockNum / 0x70E4 == 0)
                     return num;
             }
             else if (level == 1)
             {
-                num = (blockNum / 0x70E4) * stfsBlockStep[1];
+                num = (blockNum / 0x70E4) * StfsBlockStep[1];
                 if (blockNum / 0x70E4 == 0)
-                    return num + stfsBlockStep[0];
+                    return num + StfsBlockStep[0];
             }
             else
             {
-                return stfsBlockStep[1];
+                return StfsBlockStep[1];
             }
-            return num + stfsBlocksPerHashTable;
+            return num + BlocksPerHashTable;
         }
 
         long StfsBackingBlockToOffset(int BlockNumber)
         {
-            return stfsSizeOfHeaders + (BlockNumber * 0x1000);
+            return SizeOfHeaders + (BlockNumber * 0x1000);
         }
 
         long StfsDataBlockToOffset(int BlockNumber)
@@ -759,35 +415,35 @@ namespace XboxWinFsp
 
             long hashOffset = StfsBackingBlockToOffset(StfsComputeLevelNBackingHashBlockNumber(BlockNumber, Level));
 
-            if (UseSecondaryBlock && !stfsVolumeDescriptor.ReadOnlyFormat)
+            if (UseSecondaryBlock && !StfsVolumeDescriptor.ReadOnlyFormat)
                 hashOffset += kSectorSize;
 
-            bool isInvalidTable = invalidTables.Contains(hashOffset);
-            if (!cachedTables.ContainsKey(hashOffset))
+            bool isInvalidTable = InvalidTables.Contains(hashOffset);
+            if (!CachedTables.ContainsKey(hashOffset))
             {
                 // Cache the table in memory, since it's likely to be needed again
                 byte[] block = new byte[kSectorSize];
-                lock (streamLock)
+                lock (StreamLock)
                 {
-                    stream.Seek(hashOffset, SeekOrigin.Begin);
-                    stream.Read(block, 0, (int)kSectorSize);
+                    Stream.Seek(hashOffset, SeekOrigin.Begin);
+                    Stream.Read(block, 0, (int)kSectorSize);
                 }
 
                 var hashBlock = Utility.BytesToStruct<STF_HASH_BLOCK>(block);
                 hashBlock.EndianSwap();
-                cachedTables.Add(hashOffset, hashBlock);
+                CachedTables.Add(hashOffset, hashBlock);
 
                 if (!isInvalidTable)
                 {
                     // It's not cached and not in the invalid table array yet... lets check it
                     byte[] hash;
-                    lock(sha1)
-                        hash = sha1.ComputeHash(block);
+                    lock(Sha1)
+                        hash = Sha1.ComputeHash(block);
 
                     if (!hash.BytesMatch(ExpectedHash))
                     {
                         isInvalidTable = true;
-                        invalidTables.Add(hashOffset);
+                        InvalidTables.Add(hashOffset);
                         Console.WriteLine($"Invalid hash table at 0x{hashOffset:X}!");
                     }
                 }
@@ -803,7 +459,7 @@ namespace XboxWinFsp
                 return entry2;
             }
 
-            var table = cachedTables[hashOffset];
+            var table = CachedTables[hashOffset];
             var entry = table.Entries[record];
             // Copy hash from entry into hash parameter...
             Array.Copy(entry.Hash, 0, ExpectedHash, 0, 0x14);
@@ -814,13 +470,13 @@ namespace XboxWinFsp
         {
             bool useSecondaryBlock = false;
             // Use secondary block for root table if RootActiveIndex flag is set
-            if (stfsVolumeDescriptor.RootActiveIndex)
+            if (StfsVolumeDescriptor.RootActiveIndex)
                 useSecondaryBlock = true;
 
             byte[] hash = new byte[0x14];
-            Array.Copy(stfsVolumeDescriptor.RootHash, 0, hash, 0, 0x14);
+            Array.Copy(StfsVolumeDescriptor.RootHash, 0, hash, 0, 0x14);
 
-            uint numBlocks = stfsVolumeDescriptor.NumberOfTotalBlocks;
+            uint numBlocks = StfsVolumeDescriptor.NumberOfTotalBlocks;
             if (numBlocks > kDataBlocksPerHashLevel[1])
             {
                 // Get the L2 entry for this block
@@ -850,27 +506,6 @@ namespace XboxWinFsp
             return blockList.ToArray();
         }
 
-        private short StfsFindFile(string fileName, short directoryIndex)
-        {
-            for (short i = 0; i < children.Length; i++)
-                if (children[i].DirEntry.FileName == fileName && children[i].DirEntry.DirectoryIndex == directoryIndex)
-                    return i;
-
-            return -1;
-        }
-
-        private short StfsFindFile(string filePath)
-        {
-            string[] split = filePath.Split(new[] { '\\' }, StringSplitOptions.RemoveEmptyEntries);
-
-            short currentDirectory = -1;
-
-            for (int i = 0; i < split.Length; i++)
-                currentDirectory = StfsFindFile(split[i], currentDirectory);
-
-            return currentDirectory;
-        }
-
         public static DateTime StfsDateTime(int dateTime)
         {
             if (dateTime == 0)
@@ -890,14 +525,187 @@ namespace XboxWinFsp
             catch { return DateTime.Now; }
         }
 
-        class DirectoryEntryComparer : IComparer
+        public override Int32 Init(Object Host0)
         {
-            public int Compare(object x, object y)
+            try
             {
-                return String.Compare(((StfsEntry)x).DirEntry.FileName, ((StfsEntry)y).DirEntry.FileName);
+                StfsInit();
+
+                var Host = (FileSystemHost)Host0;
+                Host.SectorSize = kSectorSize;
+                Host.SectorsPerAllocationUnit = 1;
+                Host.MaxComponentLength = 255;
+                Host.FileInfoTimeout = 1000;
+                Host.CaseSensitiveSearch = false;
+                Host.CasePreservedNames = true;
+                Host.UnicodeOnDisk = true;
+                Host.PersistentAcls = false;
+                Host.PassQueryDirectoryPattern = true;
+                Host.FlushAndPurgeOnCleanup = true;
+                Host.VolumeCreationTime = 0;
+                if (IsXContent)
+                {
+                    Host.VolumeSerialNumber = BitConverter.ToUInt32(Header.ContentId, 0);
+                    Host.FileSystemName = $"STFS ({Header.SignatureTypeString})";
+                }
+                else
+                {
+                    Host.VolumeSerialNumber = BitConverter.ToUInt32(PecHeader.ContentId, 0);
+                    Host.FileSystemName = $"STFS (PEC)";
+                }
+
+                // Update volume label if we have one, otherwise it defaults to input filename
+                if (!string.IsNullOrEmpty(Metadata.DisplayName[0].String))
+                    VolumeLabel = Metadata.DisplayName[0].String;
+                else if (!string.IsNullOrEmpty(Metadata.TitleName.String))
+                    VolumeLabel = Metadata.TitleName.String;
+
+                return STATUS_SUCCESS;
+            }
+            catch (FileSystemParseException)
+            {
+                return STATUS_OPEN_FAILED;
             }
         }
 
-        static DirectoryEntryComparer _DirectoryEntryComparer = new DirectoryEntryComparer();
+        // Info about a file stored inside the STFS image
+        protected class FileEntry : IFileEntry
+        {
+            StfsFileSystem FileSystem;
+            public STF_DIRECTORY_ENTRY DirEntry;
+
+            public long DirEntryAddr;
+            internal int[] BlockChain; // Chain gets read in once a FileDesc is created for the entry
+            public Stream FakeData; // Allows us to inject custom data into the filesystem, eg. for a fake metadata.ini file.
+
+            public string Name
+            {
+                get
+                {
+                    return DirEntry.FileName;
+                }
+                set { throw new NotImplementedException(); }
+            }
+
+            public ulong Size
+            {
+                get
+                {
+                    return DirEntry.FileSize;
+                }
+                set { throw new NotImplementedException(); }
+            }
+
+            public bool IsDirectory
+            {
+                get
+                {
+                    return DirEntry.IsDirectory;
+                }
+                set { throw new NotImplementedException(); }
+            }
+
+            public ulong LastWriteTime
+            {
+                get
+                {
+                    return (ulong)DirEntry.LastWriteTime.ToFileTimeUtc();
+                }
+                set { throw new NotImplementedException(); }
+            }
+            public ulong CreationTime
+            {
+                get
+                {
+                    return (ulong)DirEntry.CreationTime.ToFileTimeUtc();
+                }
+                set { throw new NotImplementedException(); }
+            }
+
+            public List<IFileEntry> Children { get; set; }
+            public IFileEntry Parent { get; set; }
+
+            public FileEntry(StfsFileSystem fileSystem)
+            {
+                FileSystem = fileSystem;
+            }
+
+            public bool Read(Stream stream)
+            {
+                DirEntryAddr = stream.Position;
+                DirEntry = stream.ReadStruct<STF_DIRECTORY_ENTRY>();
+                DirEntry.EndianSwap();
+                return DirEntry.IsValid;
+            }
+
+            public override string ToString()
+            {
+                return $"{DirEntry.FileName}" + (Children != null ? $" ({Children.Count} children)" : "");
+            }
+
+            public uint ReadBytes(IntPtr buffer, ulong fileOffset, uint length)
+            {
+                if (fileOffset >= Size)
+                    return 0;
+
+                if (fileOffset + length >= Size)
+                    length = (uint)(Size - fileOffset);
+
+                // Lock so that two threads can't try updating chain at once...
+                lock (this)
+                    if (BlockChain == null)
+                        BlockChain = FileSystem.StfsGetDataBlockChain(DirEntry.FirstBlockNumber);
+
+                if (FakeData != null)
+                {
+                    byte[] bytes2 = new byte[length];
+                    int read = 0;
+                    lock (FakeData)
+                    {
+                        FakeData.Seek((long)fileOffset, SeekOrigin.Begin);
+                        read = FakeData.Read(bytes2, 0, bytes2.Length);
+                    }
+                    Marshal.Copy(bytes2, 0, buffer, read);
+                    return (uint)read;
+                }
+
+                uint numBlocks = (length + kSectorSize - 1) / kSectorSize;
+                uint chainNum = (uint)(fileOffset / kSectorSize);
+                uint blockOffset = (uint)(fileOffset % kSectorSize);
+
+                uint blockRemaining = kSectorSize - blockOffset;
+                uint lengthRemaining = length;
+                uint transferred = 0;
+
+                byte[] bytes = new byte[kSectorSize];
+                while (lengthRemaining > 0)
+                {
+                    var blockNum = BlockChain[chainNum];
+
+                    uint toRead = blockRemaining;
+                    if (toRead > lengthRemaining)
+                        toRead = lengthRemaining;
+
+                    int read = 0;
+                    lock (FileSystem.StreamLock)
+                    {
+                        FileSystem.Stream.Seek((long)FileSystem.StfsDataBlockToOffset(blockNum) + blockOffset, SeekOrigin.Begin);
+                        read = FileSystem.Stream.Read(bytes, 0, (int)toRead);
+                    }
+
+                    Marshal.Copy(bytes, 0, buffer, read);
+                    transferred += (uint)read;
+
+                    if (blockOffset + read >= kSectorSize)
+                        chainNum++;
+
+                    buffer += read;
+                    blockRemaining = kSectorSize;
+                    blockOffset = 0;
+                    lengthRemaining -= (uint)read;
+                }
+                return transferred;
+            }
+        }
     }
 }

@@ -201,17 +201,19 @@ namespace XboxWinFsp
                     openExplorer = true; // Open mounted drive in explorer if the mountPoint is wildcard - QoL :)
                 }
 
-                Host = new FileSystemHost(Fatx = new FatxFileSystem(ImagePath));
+                var fileStream = File.OpenRead(ImagePath);
+
+                Host = new FileSystemHost(Fatx = new FatxFileSystem(fileStream, ImagePath));
                 Host.Prefix = VolumePrefix;
                 if (Host.Mount(MountPoint, null, true, DebugFlags) < 0)
                 {
                     Fatx = null;
-                    Host = new FileSystemHost(Stfs = new StfsFileSystem(ImagePath));
+                    Host = new FileSystemHost(Stfs = new StfsFileSystem(fileStream, ImagePath));
                     Host.Prefix = VolumePrefix;
                     if (Host.Mount(MountPoint, null, true, DebugFlags) < 0)
                     {
                         Stfs = null;
-                        Host = new FileSystemHost(Gdfx = new GdfxFileSystem(ImagePath));
+                        Host = new FileSystemHost(Gdfx = new GdfxFileSystem(fileStream, ImagePath));
                         Host.Prefix = VolumePrefix;
                         if (Host.Mount(MountPoint, null, true, DebugFlags) < 0)
                             throw new IOException("cannot mount file system");
