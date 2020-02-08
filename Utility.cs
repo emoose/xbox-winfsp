@@ -83,5 +83,13 @@ namespace XboxWinFsp
             }
             return true;
         }
+
+        public static bool IsNull(this byte[] b1)
+        {
+            foreach (var byt in b1)
+                if (byt != 0)
+                    return false;
+            return true;
+        }
     }
 }

@@ -10,7 +10,6 @@ using Fsp;
 using VolumeInfo = Fsp.Interop.VolumeInfo;
 using FileInfo = Fsp.Interop.FileInfo;
 using System.Reflection;
-using System.Security.AccessControl;
 
 namespace XboxWinFsp
 {

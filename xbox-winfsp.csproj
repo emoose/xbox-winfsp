@@ -66,6 +66,7 @@
     <Compile Include="StfsFileSystem.cs" />
     <Compile Include="StfsStructs.cs" />
     <Compile Include="Utility.cs" />
+    <Compile Include="XboxStructs.cs" />
   </ItemGroup>
   <ItemGroup>
     <BootstrapperPackage Include=".NETFramework,Version=v4.5.2">

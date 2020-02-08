@@ -4,6 +4,29 @@ using System.Runtime.InteropServices;
 
 namespace XboxWinFsp
 {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    public struct PEC_HEADER
+    {
+        public XE_CONSOLE_SIGNATURE ConsoleSignature;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x14)]
+        public byte[] ContentId;
+        public ulong Unknown;
+        public STF_VOLUME_DESCRIPTOR StfsVolumeDescriptor;
+        public uint Unknown2;
+        public ulong Creator;
+        public byte ConsoleIdsCount;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 100)]
+        public XE_CONSOLE_ID[] ConsoleIds; // AKA AuditList ?
+
+        public void EndianSwap()
+        {
+            ConsoleSignature.EndianSwap();
+            Unknown = Unknown.EndianSwap();
+            StfsVolumeDescriptor.EndianSwap();
+            Unknown2 = Unknown2.EndianSwap();
+            Creator = Creator.EndianSwap();
+        }
+    }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
     public struct STF_VOLUME_DESCRIPTOR
@@ -104,6 +127,10 @@ namespace XboxWinFsp
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
     public struct XCONTENT_HEADER
     {
+        public const uint kSignatureTypeConBE = 0x434F4E20;
+        public const uint kSignatureTypeLiveBE = 0x4C495645;
+        public const uint kSignatureTypePirsBE = 0x50495253;
+
         public uint SignatureType;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x228)]
         public byte[] Signature;
@@ -113,6 +140,22 @@ namespace XboxWinFsp
         public byte[] ContentId;
         public uint SizeOfHeaders;
 
+        public string SignatureTypeString
+        {
+            get
+            {
+                switch(SignatureType)
+                {
+                    case kSignatureTypeConBE:
+                        return "CON";
+                    case kSignatureTypeLiveBE:
+                        return "LIVE";
+                    case kSignatureTypePirsBE:
+                        return "PIRS";
+                }
+                return SignatureType.ToString("X8");
+            }
+        }
         public void EndianSwap()
         {
             SignatureType = SignatureType.EndianSwap();
@@ -189,6 +232,21 @@ namespace XboxWinFsp
         public byte DiscsInSet;
         public uint SaveGameId;
 
+        public string Version
+        {
+            get
+            {
+                return $"{(VersionMajorMinor >> 8) & 0xF}.{VersionMajorMinor & 0xF}.{VersionBuild}.{VersionQFE}";
+            }
+        }
+        public string BaseVersion
+        {
+            get
+            {
+                return $"{(BaseVersionMajorMinor >> 8) & 0xF}.{BaseVersionMajorMinor & 0xF}.{BaseVersionBuild}.{BaseVersionQFE}";
+            }
+        }
+
         public void EndianSwap()
         {
             MediaId = MediaId.EndianSwap();
@@ -235,7 +293,7 @@ namespace XboxWinFsp
         public uint ContentMetadataVersion;
         public ulong ContentSize;
 
-        XEX2_EXECUTION_ID ExecutionId;
+        public XEX2_EXECUTION_ID ExecutionId;
 
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 5)]
         public byte[] ConsoleId;
