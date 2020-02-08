@@ -16,6 +16,11 @@ namespace XboxWinFsp
 
     static class Utility
     {
+        public static long RoundToPages(long number, long pageSize)
+        {
+            return ((number + pageSize - 1) / pageSize);
+        }
+
         public static T ReadStruct<T>(this Stream stream)
         {
             var size = Marshal.SizeOf(typeof(T));

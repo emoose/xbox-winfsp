@@ -61,6 +61,8 @@ namespace XboxWinFsp
                 FileSystemHost Host = null;
                 GdfxFileSystem Gdfx = null;
                 StfsFileSystem Stfs = null;
+                FatxFileSystem Fatx = null;
+
                 int I;
 
                 for (I = 1; Args.Length > I; I++)
@@ -191,9 +193,6 @@ namespace XboxWinFsp
                     if (0 > FileSystemHost.SetDebugLogFile(DebugLogFile))
                         throw new CommandLineUsageException("cannot open debug log file");
 
-                Host = new FileSystemHost(Stfs = new StfsFileSystem(ImagePath));
-                Host.Prefix = VolumePrefix;
-
                 // For some reason WinFsp needs MountPoint to be null for wildcard to work without elevation...
                 bool openExplorer = false;
                 if (MountPoint == "*")
@@ -202,13 +201,21 @@ namespace XboxWinFsp
                     openExplorer = true; // Open mounted drive in explorer if the mountPoint is wildcard - QoL :)
                 }
 
+                Host = new FileSystemHost(Fatx = new FatxFileSystem(ImagePath));
+                Host.Prefix = VolumePrefix;
                 if (Host.Mount(MountPoint, null, true, DebugFlags) < 0)
                 {
-                    Stfs = null;
-                    Host = new FileSystemHost(Gdfx = new GdfxFileSystem(ImagePath));
+                    Fatx = null;
+                    Host = new FileSystemHost(Stfs = new StfsFileSystem(ImagePath));
                     Host.Prefix = VolumePrefix;
                     if (Host.Mount(MountPoint, null, true, DebugFlags) < 0)
-                        throw new IOException("cannot mount file system");
+                    {
+                        Stfs = null;
+                        Host = new FileSystemHost(Gdfx = new GdfxFileSystem(ImagePath));
+                        Host.Prefix = VolumePrefix;
+                        if (Host.Mount(MountPoint, null, true, DebugFlags) < 0)
+                            throw new IOException("cannot mount file system");
+                    }
                 }
 
                 MountPoint = Host.MountPoint();
