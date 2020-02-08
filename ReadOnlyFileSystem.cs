@@ -16,7 +16,8 @@ namespace XboxWinFsp
 
         public List<IFileEntry> RootFiles;
         public int SectorSize;
-        public ulong TotalBytesInUse;
+        public ulong BytesFree;
+        public ulong BytesInUse;
         public string VolumeLabel;
 
         public ReadOnlyFileSystem(Stream stream, string inputPath, int sectorSize)
@@ -236,8 +237,8 @@ namespace XboxWinFsp
         public override Int32 GetVolumeInfo(out VolumeInfo VolumeInfo)
         {
             VolumeInfo = default;
-            VolumeInfo.FreeSize = 0;
-            VolumeInfo.TotalSize = TotalBytesInUse + VolumeInfo.FreeSize;
+            VolumeInfo.FreeSize = BytesFree;
+            VolumeInfo.TotalSize = BytesInUse + BytesFree;
             VolumeInfo.SetVolumeLabel(VolumeLabel);
 
             return STATUS_SUCCESS;

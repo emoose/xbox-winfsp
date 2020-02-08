@@ -106,7 +106,7 @@ namespace XboxWinFsp
                 if (entry.IsDirectory)
                     entry.Children = GdfReadDirectory(entry.DirEntry.FirstSector, entry.Size, entry);
                 else
-                    TotalBytesInUse += entry.DirEntry.FileSize;
+                    BytesInUse += entry.DirEntry.FileSize;
 
                 entries.Add(entry);
 
@@ -138,7 +138,7 @@ namespace XboxWinFsp
                 Host.FileInfoTimeout = 1000;
                 Host.CaseSensitiveSearch = false;
                 Host.CasePreservedNames = true;
-                Host.UnicodeOnDisk = true;
+                Host.UnicodeOnDisk = false;
                 Host.PersistentAcls = false;
                 Host.PassQueryDirectoryPattern = true;
                 Host.FlushAndPurgeOnCleanup = true;
@@ -241,7 +241,6 @@ namespace XboxWinFsp
                 stream.Position = (long)((ulong)(DirEntryAddr + DirEntry.FileNameLength + 0x11) & 0xFFFFFFFFFFFFFFFC);
                 return true;
             }
-
 
             public uint ReadBytes(IntPtr buffer, ulong fileOffset, uint length)
             {

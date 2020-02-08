@@ -114,7 +114,7 @@ namespace XboxWinFsp
                         noMoreEntries = true;
                         break;
                     }
-                    TotalBytesInUse += entry.DirEntry.FileSize;
+                    BytesInUse += entry.DirEntry.FileSize;
                     entries.Add(entry);
                 }
 
@@ -540,7 +540,7 @@ namespace XboxWinFsp
                 Host.FileInfoTimeout = 1000;
                 Host.CaseSensitiveSearch = false;
                 Host.CasePreservedNames = true;
-                Host.UnicodeOnDisk = true;
+                Host.UnicodeOnDisk = false;
                 Host.PersistentAcls = false;
                 Host.PassQueryDirectoryPattern = true;
                 Host.FlushAndPurgeOnCleanup = true;

@@ -32,7 +32,7 @@ namespace XboxWinFsp
         {
             get
             {
-                return ClusterCount + 1 >= 0xFFF0;
+                return ClusterCount >= 0xFFF0;
             }
         }
 
@@ -79,15 +79,18 @@ namespace XboxWinFsp
 
             // Work out a "maximum size" of the partition
             // (xlaunch.fdf can be tiny, 1MB or so, but the kernel treats it like it's 0x1000000 bytes, so that it can expand as needed)
-            // (we have to do the same, in order for the chainMap calculations below to make sense)
+            // (so we have to do the same in order for the chainMap calculations below to make sense)
             // 0x1000000 seems to be the smallest out there, so we'll use that
             MaxSize = Math.Max(0x1000000, Stream.Length);
-            ClusterCount = MaxSize / ClusterSize;
+            ClusterCount = (MaxSize / ClusterSize) + kReservedChainMapEntries;
 
-            Stream.Position = Position + 0x1000;
+            // Read in the chainmap...
+            Stream.Position = Position + kFatxPageSize;
 
             ChainMap = new uint[ClusterCount];
             byte[] data = new byte[4];
+
+            uint numFree = 0;
             for (uint i = 0; i < ClusterCount; i++)
             {
                 Stream.Read(data, 0, IsFatx32 ? 4 : 2);
@@ -95,19 +98,25 @@ namespace XboxWinFsp
                     Array.Reverse(data, 0, IsFatx32 ? 4 : 2);
 
                 ChainMap[i] = IsFatx32 ? BitConverter.ToUInt32(data, 0) : BitConverter.ToUInt16(data, 0);
-            }
 
-            long chainMapLength = (ClusterCount + 1) * (IsFatx32 ? 4 : 2);
-            chainMapLength = (long)Utility.RoundToPages((ulong)chainMapLength, kFatxPageSize) * kFatxPageSize;
-
-            DataAddress = Position + kFatxPageSize + chainMapLength;
-
-            // Extend 16-bit end-of-chain values
-            // TODO: BE 16-bit kCluster16XXX values seem messed up?
-            if (!IsFatx32)
-                for (uint i = 0; i < ClusterCount; i++)
+                // Extend 16-bit end-of-chain values
+                // TODO: BE 16-bit kCluster16XXX values seem messed up?
+                if (!IsFatx32)
                     if ((ChainMap[i] & 0xFFF0) == 0xFFF0 || (ChainMap[i] & 0xF0FF) == 0xF0FF)
                         ChainMap[i] |= 0xFFFF0000;
+
+                if (ChainMap[i] == 0)
+                    numFree++;
+            }
+
+            // Calculate byte totals
+            BytesFree = numFree * ClusterSize;
+            BytesInUse = ((ulong)(ClusterCount - kReservedChainMapEntries) * ClusterSize) - BytesFree;
+
+            // Calculate address of data start
+            long chainMapLength = ClusterCount * (IsFatx32 ? 4 : 2);
+            chainMapLength = (long)Utility.RoundToPages((ulong)chainMapLength, kFatxPageSize) * kFatxPageSize;
+            DataAddress = Position + kFatxPageSize + chainMapLength;
 
             // Finally, start reading in the direntries...
             RootFiles = FatxReadDirectory(FatHeader.RootDirFirstCluster, null);
@@ -136,8 +145,6 @@ namespace XboxWinFsp
 
                     if (entry.IsDirectory)
                         entry.Children = FatxReadDirectory(entry.DirEntry.FirstCluster, entry);
-                    else
-                        TotalBytesInUse += entry.Size;
 
                     entries.Add(entry);
                 }
@@ -184,7 +191,7 @@ namespace XboxWinFsp
                 Host.FileInfoTimeout = 1000;
                 Host.CaseSensitiveSearch = false;
                 Host.CasePreservedNames = true;
-                Host.UnicodeOnDisk = true;
+                Host.UnicodeOnDisk = false;
                 Host.PersistentAcls = false;
                 Host.PassQueryDirectoryPattern = true;
                 Host.FlushAndPurgeOnCleanup = true;
