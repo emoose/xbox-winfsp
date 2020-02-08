@@ -142,7 +142,7 @@ namespace XboxWinFsp
                 Host.PersistentAcls = false;
                 Host.PassQueryDirectoryPattern = true;
                 Host.FlushAndPurgeOnCleanup = true;
-                Host.VolumeCreationTime = GdfHeader.TimeStamp;
+                Host.VolumeCreationTime = (ulong)GdfHeader.TimeStamp;
                 Host.VolumeSerialNumber = GdfHeader.RootSector;
 
                 string gdfType = "XGD1";
@@ -200,19 +200,29 @@ namespace XboxWinFsp
                 set { throw new NotImplementedException(); }
             }
 
-            public ulong LastWriteTime
+            public DateTime CreationTime
             {
                 get
                 {
-                    return FileSystem.GdfHeader.TimeStamp;
+                    return DateTime.FromFileTimeUtc(FileSystem.GdfHeader.TimeStamp);
                 }
                 set { throw new NotImplementedException(); }
             }
-            public ulong CreationTime
+
+            public DateTime LastWriteTime
             {
                 get
                 {
-                    return FileSystem.GdfHeader.TimeStamp;
+                    return DateTime.FromFileTimeUtc(FileSystem.GdfHeader.TimeStamp);
+                }
+                set { throw new NotImplementedException(); }
+            }
+
+            public DateTime LastAccessTime
+            {
+                get
+                {
+                    return DateTime.FromFileTimeUtc(FileSystem.GdfHeader.TimeStamp);
                 }
                 set { throw new NotImplementedException(); }
             }
@@ -270,7 +280,7 @@ namespace XboxWinFsp
 
         public uint RootSector;
         public uint RootSize;
-        public ulong TimeStamp;
+        public long TimeStamp;
         public uint Version;
 
         public bool IsValid

@@ -42,6 +42,42 @@ namespace XboxWinFsp
             return (number + pageSize - 1) / pageSize;
         }
 
+        public static DateTime DecodeMSTime(int dateTime)
+        {
+            if (dateTime == 0)
+                return DateTime.MinValue;
+
+            int second = (dateTime & 0x1F) * 2;
+            int minute = (dateTime >> 5) & 0x3F;
+            int hour = (dateTime >> 11) & 0x1F;
+            int day = (dateTime >> 16) & 0x1F;
+            int month = (dateTime >> 21) & 0x0F;
+            int year = ((dateTime >> 25) & 0x7F) + 1980;
+
+            try
+            {
+                return new DateTime(year, month, day, hour, minute, second).ToLocalTime();
+            }
+            catch { return DateTime.MinValue; }
+        }
+
+        public static int EncodeMSTime(DateTime dateTime)
+        {
+            dateTime = dateTime.ToUniversalTime();
+
+            int second = dateTime.Second;
+            int minute = dateTime.Minute;
+            int hour = dateTime.Hour;
+            int day = dateTime.Day;
+            int month = dateTime.Month;
+            int year = dateTime.Year;
+
+            year -= 1980;
+            second /= 2;
+
+            return (year << 25) | (month << 21) | (day << 16) | (hour << 11) | (minute << 5) | second;
+        }
+
         public static T ReadStruct<T>(this Stream stream)
         {
             var size = Marshal.SizeOf(typeof(T));

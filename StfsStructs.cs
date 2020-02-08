@@ -496,7 +496,11 @@ namespace XboxWinFsp
         {
             get
             {
-                return StfsFileSystem.StfsDateTime(CreationTimeRaw);
+                return Utility.DecodeMSTime(CreationTimeRaw);
+            }
+            set
+            {
+                CreationTimeRaw = Utility.EncodeMSTime(value);
             }
         }
 
@@ -504,7 +508,11 @@ namespace XboxWinFsp
         {
             get
             {
-                return StfsFileSystem.StfsDateTime(LastWriteTimeRaw);
+                return Utility.DecodeMSTime(LastWriteTimeRaw);
+            }
+            set
+            {
+                LastWriteTimeRaw = Utility.EncodeMSTime(value);
             }
         }
 

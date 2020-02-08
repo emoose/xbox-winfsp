@@ -35,8 +35,9 @@ namespace XboxWinFsp
 
             bool IsDirectory { get; set; }
 
-            ulong CreationTime { get; set; }
-            ulong LastWriteTime { get; set; }
+            DateTime CreationTime { get; set; }
+            DateTime LastWriteTime { get; set; }
+            DateTime LastAccessTime { get; set; }
 
             List<IFileEntry> Children { get; set; }
             IFileEntry Parent { get; set; }
@@ -62,8 +63,9 @@ namespace XboxWinFsp
 
                 if (FileEntry != null)
                 {
-                    FileInfo.CreationTime = (ulong)FileEntry.CreationTime;//.ToFileTimeUtc();
-                    FileInfo.LastWriteTime = FileInfo.ChangeTime = (ulong)FileEntry.LastWriteTime;//.ToFileTimeUtc();
+                    FileInfo.CreationTime = (ulong)FileEntry.CreationTime.ToFileTimeUtc();
+                    FileInfo.LastWriteTime = FileInfo.ChangeTime = (ulong)FileEntry.LastWriteTime.ToFileTimeUtc();
+                    FileInfo.LastAccessTime = (ulong)FileEntry.LastAccessTime.ToFileTimeUtc();
                     FileInfo.FileSize = FileEntry.Size;
                     FileInfo.AllocationSize = Utility.RoundToPages(FileEntry.Size, (ulong)FileSystem.SectorSize) * (ulong)FileSystem.SectorSize;
                     FileInfo.FileAttributes = FileEntry.IsDirectory ? (uint)FileAttributes.Directory : 0;

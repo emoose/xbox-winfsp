@@ -26,6 +26,9 @@ namespace XboxWinFsp
         long DataAddress = 0;
         uint[] ChainMap;
 
+        // The earliest CreationTime in all the file entries
+        DateTime CreationTime = DateTime.Now;
+
         object StreamLock = new object();
 
         bool IsFatx32
@@ -143,6 +146,9 @@ namespace XboxWinFsp
                         break;
                     }
 
+                    if (entry.CreationTime < CreationTime)
+                        CreationTime = entry.CreationTime;
+
                     if (entry.IsDirectory)
                         entry.Children = FatxReadDirectory(entry.DirEntry.FirstCluster, entry);
 
@@ -195,7 +201,7 @@ namespace XboxWinFsp
                 Host.PersistentAcls = false;
                 Host.PassQueryDirectoryPattern = true;
                 Host.FlushAndPurgeOnCleanup = true;
-                Host.VolumeCreationTime = 0;
+                Host.VolumeCreationTime = (ulong)CreationTime.ToFileTimeUtc();
                 Host.VolumeSerialNumber = FatHeader.SerialNumber;
                 Host.FileSystemName = $"FATX{(IsFatx32 ? "32" : "16")}";
 
@@ -256,8 +262,32 @@ namespace XboxWinFsp
                 }
             }
 
-            public ulong LastWriteTime { get; set; }
-            public ulong CreationTime { get; set; }
+            public DateTime CreationTime
+            {
+                get
+                {
+                    return DirEntry.CreationTime;
+                }
+                set { throw new NotImplementedException(); }
+            }
+
+            public DateTime LastWriteTime
+            {
+                get
+                {
+                    return DirEntry.LastWriteTime;
+                }
+                set { throw new NotImplementedException(); }
+            }
+
+            public DateTime LastAccessTime
+            {
+                get
+                {
+                    return DirEntry.LastAccessTime;
+                }
+                set { throw new NotImplementedException(); }
+            }
 
             public List<IFileEntry> Children { get; set; }
             public IFileEntry Parent { get; set; }
@@ -379,9 +409,9 @@ namespace XboxWinFsp
         public byte[] FileNameBytes;
         public uint FirstCluster;
         public uint FileSize;
-        public uint CreationTime;
-        public uint LastWriteTime;
-        public uint LastAccessTime;
+        public int CreationTimeRaw;
+        public int LastWriteTimeRaw;
+        public int LastAccessTimeRaw;
 
         public bool IsDirectory
         {
@@ -417,6 +447,30 @@ namespace XboxWinFsp
             }
         }
 
+        public DateTime CreationTime
+        {
+            get
+            {
+                return Utility.DecodeMSTime(CreationTimeRaw);
+            }
+        }
+
+        public DateTime LastWriteTime
+        {
+            get
+            {
+                return Utility.DecodeMSTime(LastWriteTimeRaw);
+            }
+        }
+
+        public DateTime LastAccessTime
+        {
+            get
+            {
+                return Utility.DecodeMSTime(LastAccessTimeRaw);
+            }
+        }
+
         public string FileName
         {
             get
@@ -434,9 +488,9 @@ namespace XboxWinFsp
         {
             FirstCluster = FirstCluster.EndianSwap();
             FileSize = FileSize.EndianSwap();
-            CreationTime = CreationTime.EndianSwap();
-            LastWriteTime = LastWriteTime.EndianSwap();
-            LastAccessTime = LastAccessTime.EndianSwap();
+            CreationTimeRaw = CreationTimeRaw.EndianSwap();
+            LastWriteTimeRaw = LastWriteTimeRaw.EndianSwap();
+            LastAccessTimeRaw = LastAccessTimeRaw.EndianSwap();
         }
     }
 }

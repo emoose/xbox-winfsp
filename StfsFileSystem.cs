@@ -26,6 +26,9 @@ namespace XboxWinFsp
         // All files in the package
         FileEntry[] Children;
 
+        // The earliest CreationTime in all the file entries
+        DateTime CreationTime = DateTime.Now;
+
         // Values used in some block calculations, inited by StfsInit();
         long SizeOfHeaders = 0;
         int BlocksPerHashTable = 1;
@@ -114,7 +117,12 @@ namespace XboxWinFsp
                         noMoreEntries = true;
                         break;
                     }
-                    BytesInUse += entry.DirEntry.FileSize;
+                    if (entry.CreationTime < CreationTime)
+                        CreationTime = entry.CreationTime;
+
+                    if (!entry.IsDirectory)
+                        BytesInUse += entry.DirEntry.FileSize;
+
                     entries.Add(entry);
                 }
 
@@ -167,10 +175,14 @@ namespace XboxWinFsp
         // Creates some fake metadata entries at root of FS
         void InitMetadataFiles(ref List<FileEntry> entries)
         {
+            var curTime = DateTime.Now;
+
             // metadata.ini
             var fakeEntry = new FileEntry(this);
             fakeEntry.DirEntry.FileName = "metadata.ini";
             fakeEntry.DirEntry.DirectoryIndex = -1;
+            fakeEntry.CreationTime = curTime;
+            fakeEntry.LastWriteTime = curTime;
             fakeEntry.FakeData = new MemoryStream();
             var writer = new StreamWriter(fakeEntry.FakeData);
             if (IsConsoleSigned)
@@ -324,6 +336,8 @@ namespace XboxWinFsp
                     var thumbEntry = new FileEntry(this);
                     thumbEntry.DirEntry.FileName = "metadata_thumbnail.png";
                     thumbEntry.DirEntry.DirectoryIndex = -1;
+                    thumbEntry.CreationTime = curTime;
+                    thumbEntry.LastWriteTime = curTime;
                     thumbEntry.FakeData = new MemoryStream();
                     thumbEntry.FakeData.Write(Metadata.Thumbnail, 0, (int)thumbSize);
                     thumbEntry.FakeData.Flush();
@@ -339,6 +353,8 @@ namespace XboxWinFsp
                     var thumbEntry = new FileEntry(this);
                     thumbEntry.DirEntry.FileName = "metadata_thumbnail_title.png";
                     thumbEntry.DirEntry.DirectoryIndex = -1;
+                    thumbEntry.CreationTime = curTime;
+                    thumbEntry.LastWriteTime = curTime;
                     thumbEntry.FakeData = new MemoryStream();
                     thumbEntry.FakeData.Write(Metadata.TitleThumbnail, 0, (int)thumbSize);
                     thumbEntry.FakeData.Flush();
@@ -521,25 +537,6 @@ namespace XboxWinFsp
             return blockList.ToArray();
         }
 
-        public static DateTime StfsDateTime(int dateTime)
-        {
-            if (dateTime == 0)
-                return DateTime.Now;
-
-            int second = (dateTime & 0x1F) << 1;
-            int minute = (dateTime >> 5) & 0x3F;
-            int hour = (dateTime >> 11) & 0x1F;
-            int day = (dateTime >> 16) & 0x1F;
-            int month = (dateTime >> 21) & 0x0F;
-            int year = ((dateTime >> 25) & 0x7F) + 1980;
-
-            try
-            {
-                return new DateTime(year, month, day, hour, minute, second).ToLocalTime();
-            }
-            catch { return DateTime.Now; }
-        }
-
         public override Int32 Init(Object Host0)
         {
             try
@@ -557,7 +554,7 @@ namespace XboxWinFsp
                 Host.PersistentAcls = false;
                 Host.PassQueryDirectoryPattern = true;
                 Host.FlushAndPurgeOnCleanup = true;
-                Host.VolumeCreationTime = 0;
+                Host.VolumeCreationTime = (ulong)CreationTime.ToFileTimeUtc();
                 if (IsXContent)
                 {
                     Host.VolumeSerialNumber = BitConverter.ToUInt32(Header.ContentId, 0);
@@ -620,19 +617,35 @@ namespace XboxWinFsp
                 set { throw new NotImplementedException(); }
             }
 
-            public ulong LastWriteTime
+            public DateTime CreationTime
             {
                 get
                 {
-                    return (ulong)DirEntry.LastWriteTime.ToFileTimeUtc();
+                    return DirEntry.CreationTime;
                 }
-                set { throw new NotImplementedException(); }
+                set
+                {
+                    DirEntry.CreationTime = value;
+                }
             }
-            public ulong CreationTime
+
+            public DateTime LastWriteTime
             {
                 get
                 {
-                    return (ulong)DirEntry.CreationTime.ToFileTimeUtc();
+                    return DirEntry.LastWriteTime;
+                }
+                set
+                {
+                    DirEntry.LastWriteTime = value;
+                }
+            }
+
+            public DateTime LastAccessTime
+            {
+                get
+                {
+                    return LastWriteTime;
                 }
                 set { throw new NotImplementedException(); }
             }
