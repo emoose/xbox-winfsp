@@ -372,14 +372,14 @@ namespace XboxWinFsp
         {
             get
             {
-                return $"{(VersionMajorMinor >> 8) & 0xF}.{VersionMajorMinor & 0xF}.{VersionBuild}.{VersionQFE}";
+                return $"{(VersionMajorMinor >> 4) & 0xF}.{VersionMajorMinor & 0xF}.{VersionBuild}.{VersionQFE}";
             }
         }
         public string BaseVersion
         {
             get
             {
-                return $"{(BaseVersionMajorMinor >> 8) & 0xF}.{BaseVersionMajorMinor & 0xF}.{BaseVersionBuild}.{BaseVersionQFE}";
+                return $"{(BaseVersionMajorMinor >> 4) & 0xF}.{BaseVersionMajorMinor & 0xF}.{BaseVersionBuild}.{BaseVersionQFE}";
             }
         }
 
