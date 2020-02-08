@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Text;
+using System.Security.Cryptography;
 using System.Runtime.InteropServices;
 using System.IO;
 
@@ -21,6 +21,8 @@ namespace XboxWinFsp
         string imagePath = "";
         Stream stream;
         Object streamLock = new object();
+
+        SHA1 sha1 = SHA1.Create();
 
         STF_VOLUME_DESCRIPTOR stfsVolumeDescriptor
         {
@@ -376,6 +378,9 @@ namespace XboxWinFsp
                         header.SignatureType != XCONTENT_HEADER.kSignatureTypePirsBE)
                         throw new FileSystemParseException("File has invalid header magic");
 
+                    if (header.SizeOfHeaders == 0)
+                        throw new FileSystemParseException("Package doesn't contain STFS filesystem");
+
                     if (header.SignatureType == XCONTENT_HEADER.kSignatureTypeConBE)
                     {
                         isConsoleSigned = true;
@@ -385,6 +390,9 @@ namespace XboxWinFsp
                     stream.Position = 0x344;
                     metadata = stream.ReadStruct<XCONTENT_METADATA>();
                     metadata.EndianSwap();
+
+                    if (metadata.VolumeType != 0)
+                        throw new FileSystemParseException("Package contains unsupported SVOD filesystem");
                 }
 
                 if (stfsVolumeDescriptor.DescriptorLength != 0x24)
@@ -744,8 +752,8 @@ namespace XboxWinFsp
         STF_HASH_ENTRY StfsGetLevelNHashEntry(int BlockNumber, int Level, ref byte[] ExpectedHash, bool UseSecondaryBlock)
         {
             int record = BlockNumber;
-            for (int i = 0; i < Level; i++)
-                record /= kDataBlocksPerHashLevel[0];
+            if (Level > 0)
+                record /= kDataBlocksPerHashLevel[Level - 1];
 
             record %= kDataBlocksPerHashLevel[0];
 
@@ -757,34 +765,39 @@ namespace XboxWinFsp
             bool isInvalidTable = invalidTables.Contains(hashOffset);
             if (!cachedTables.ContainsKey(hashOffset))
             {
-                // Cache the table in memory, since it's likely to be needed again;
-                byte[] blockData = new byte[kSectorSize];
+                // Cache the table in memory, since it's likely to be needed again
+                byte[] block = new byte[kSectorSize];
                 lock (streamLock)
                 {
                     stream.Seek(hashOffset, SeekOrigin.Begin);
-                    stream.Read(blockData, 0, (int)kSectorSize);
+                    stream.Read(block, 0, (int)kSectorSize);
                 }
 
-                STF_HASH_BLOCK block = Utility.BytesToStruct<STF_HASH_BLOCK>(blockData);
-                block.EndianSwap();
-                cachedTables.Add(hashOffset, block);
+                var hashBlock = Utility.BytesToStruct<STF_HASH_BLOCK>(block);
+                hashBlock.EndianSwap();
+                cachedTables.Add(hashOffset, hashBlock);
+
                 if (!isInvalidTable)
                 {
                     // It's not cached and not in the invalid table array yet... lets check it
-                    byte[] hash = System.Security.Cryptography.SHA1.Create().ComputeHash(blockData);
+                    byte[] hash;
+                    lock(sha1)
+                        hash = sha1.ComputeHash(block);
+
                     if (!hash.BytesMatch(ExpectedHash))
                     {
                         isInvalidTable = true;
                         invalidTables.Add(hashOffset);
+                        Console.WriteLine($"Invalid hash table at 0x{hashOffset:X}!");
                     }
                 }
             }
 
             if (isInvalidTable)
             {
-                // If table is corrupt there's no use reading invalid data, lets try
-                // salvaging things by providing next block as block + 1, should work fine
-                // for LIVE/PIRS packages hopefully.
+                // If table is corrupt there's no use reading invalid data
+                // Lets try salvaging things by providing next block as block + 1
+                // (Should work fine for LIVE/PIRS packages hopefully)
                 var entry2 = new STF_HASH_ENTRY();
                 entry2.Level0NextBlock = BlockNumber + 1;
                 return entry2;
