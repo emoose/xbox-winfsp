@@ -225,20 +225,22 @@ namespace XboxWinFsp
                     writer.WriteLine($"Category = {Metadata.Category}");
                 if (!Metadata.DeviceId.IsNull())
                     writer.WriteLine($"DeviceId = {BitConverter.ToString(Metadata.DeviceId)}");
+
                 for (int i = 0; i < 9; i++)
                     if (!string.IsNullOrEmpty(Metadata.DisplayName[i].String))
-                        writer.WriteLine($"DisplayName[{i}] = {Metadata.DisplayName[i].String}");
+                        writer.WriteLine($"DisplayName[{Utility.XboxLanguages[i]}] = {Metadata.DisplayName[i].String}");
                 if (Metadata.ContentMetadataVersion >= 2)
                     for (int i = 0; i < 3; i++)
                         if (!string.IsNullOrEmpty(Metadata.DisplayNameEx[i].String))
-                            writer.WriteLine($"DisplayNameEx[{i}] = {Metadata.DisplayNameEx[i].String}");
+                            writer.WriteLine($"DisplayNameEx[{Utility.XboxLanguages[i+9]}] = {Metadata.DisplayNameEx[i].String}");
                 for (int i = 0; i < 9; i++)
                     if (!string.IsNullOrEmpty(Metadata.Description[i].String))
-                        writer.WriteLine($"Description[{i}] = {Metadata.Description[i].String}");
+                        writer.WriteLine($"Description[{Utility.XboxLanguages[i]}] = {Metadata.Description[i].String}");
                 if (Metadata.ContentMetadataVersion >= 2)
                     for (int i = 0; i < 3; i++)
                         if (!string.IsNullOrEmpty(Metadata.DescriptionEx[i].String))
-                            writer.WriteLine($"DescriptionEx[{i}] = {Metadata.DescriptionEx[i].String}");
+                            writer.WriteLine($"DescriptionEx[{Utility.XboxLanguages[i+9]}] = {Metadata.DescriptionEx[i].String}");
+
                 if (!string.IsNullOrEmpty(Metadata.Publisher.String))
                     writer.WriteLine($"Publisher = {Metadata.Publisher.String}");
                 if (!string.IsNullOrEmpty(Metadata.TitleName.String))

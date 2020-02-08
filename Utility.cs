@@ -16,9 +16,30 @@ namespace XboxWinFsp
 
     static class Utility
     {
+        public static readonly string[] XboxLanguages =
+        {
+            "English",
+            "Japanese",
+            "German",
+            "French",
+            "Spanish",
+            "Italian",
+            "Korean",
+            "Trad.Chinese",
+            "Portuguese",
+            "Unused10", // formerly SimpChinese?
+            "Polish",
+            "Russian",
+            "Swedish",
+            "Turkish",
+            "Norwegian",
+            "Dutch",
+            "Simp.Chinese"
+        };
+
         public static ulong RoundToPages(ulong number, ulong pageSize)
         {
-            return ((number + pageSize - 1) / pageSize);
+            return (number + pageSize - 1) / pageSize;
         }
 
         public static T ReadStruct<T>(this Stream stream)
