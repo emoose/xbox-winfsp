@@ -653,11 +653,6 @@ namespace XboxWinFsp
                 if (fileOffset + length >= Size)
                     length = (uint)(Size - fileOffset);
 
-                // Lock so that two threads can't try updating chain at once...
-                lock (this)
-                    if (BlockChain == null)
-                        BlockChain = FileSystem.StfsGetDataBlockChain(DirEntry.FirstBlockNumber);
-
                 if (FakeData != null)
                 {
                     byte[] bytes2 = new byte[length];
@@ -670,6 +665,11 @@ namespace XboxWinFsp
                     Marshal.Copy(bytes2, 0, buffer, read);
                     return (uint)read;
                 }
+
+                // Lock so that two threads can't try updating chain at once...
+                lock (this)
+                    if (BlockChain == null)
+                        BlockChain = FileSystem.StfsGetDataBlockChain(DirEntry.FirstBlockNumber);
 
                 uint chainNum = (uint)(fileOffset / kSectorSize);
                 uint blockOffset = (uint)(fileOffset % kSectorSize);
