@@ -265,40 +265,50 @@ namespace XboxWinFsp
 
             if (FileDesc.FileEntry.FakeData != null)
             {
-                byte[] bytes = new byte[Length];
+                byte[] bytes2 = new byte[Length];
                 lock (FileDesc.FileEntry.FakeData)
                 {
                     FileDesc.FileEntry.FakeData.Seek((long)Offset, SeekOrigin.Begin);
-                    PBytesTransferred = (uint)FileDesc.FileEntry.FakeData.Read(bytes, 0, bytes.Length);
+                    PBytesTransferred = (uint)FileDesc.FileEntry.FakeData.Read(bytes2, 0, bytes2.Length);
                 }
-                Marshal.Copy(bytes, 0, Buffer, (int)PBytesTransferred);
+                Marshal.Copy(bytes2, 0, Buffer, (int)PBytesTransferred);
                 return STATUS_SUCCESS;
             }
 
             uint numBlocks = (Length + kSectorSize - 1) / kSectorSize;
-            uint startChainIdx = (uint)(Offset / kSectorSize);
-            uint blockDone = (uint)(Offset % kSectorSize);
-            uint blockRemaining = kSectorSize - blockDone;
+            uint chainNum = (uint)(Offset / kSectorSize);
+            uint blockOffset = (uint)(Offset % kSectorSize);
+
+            uint blockRemaining = kSectorSize - blockOffset;
             uint lengthRemaining = Length;
             uint transferred = 0;
-            for(uint i = 0; i < numBlocks; i++)
+
+            byte[] bytes = new byte[kSectorSize];
+            while (lengthRemaining > 0)
             {
-                var blockNum = FileDesc.FileEntry.BlockChain[startChainIdx + i];
+                var blockNum = FileDesc.FileEntry.BlockChain[chainNum];
+
                 uint toRead = blockRemaining;
                 if (toRead > lengthRemaining)
                     toRead = lengthRemaining;
 
-                byte[] bytes = new byte[toRead];
+                int read = 0;
                 lock (streamLock)
                 {
-                    stream.Seek((long)StfsDataBlockToOffset(blockNum) + blockDone, SeekOrigin.Begin);
-                    transferred += (uint)stream.Read(bytes, 0, bytes.Length);
+                    stream.Seek((long)StfsDataBlockToOffset(blockNum) + blockOffset, SeekOrigin.Begin);
+                    read = stream.Read(bytes, 0, (int)toRead);
                 }
-                Marshal.Copy(bytes, 0, Buffer, bytes.Length);
-                Buffer += bytes.Length;
+
+                Marshal.Copy(bytes, 0, Buffer, read);
+                transferred += (uint)read;
+
+                if (blockOffset + read >= kSectorSize)
+                    chainNum++;
+
+                Buffer += read;
                 blockRemaining = kSectorSize;
-                blockDone = 0;
-                lengthRemaining -= toRead;
+                blockOffset = 0;
+                lengthRemaining -= (uint)read;
             }
             PBytesTransferred = transferred;
 
