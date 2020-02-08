@@ -87,7 +87,7 @@ namespace XboxWinFsp
             var searchList = RootFiles;
             for (int i = 0; i < filePath.Length; i++)
             {
-                var entry = searchList.Find(s => s.Name == filePath[i]);
+                var entry = searchList.Find(s => string.Compare(s.Name, filePath[i], StringComparison.InvariantCultureIgnoreCase) == 0);
                 if (entry == null)
                     break;
                 else
