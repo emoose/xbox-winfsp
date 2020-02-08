@@ -26,16 +26,51 @@ namespace XboxWinFsp
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 5)]
         public byte[] ConsoleId;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 11)]
-        public byte[] ConsolePartNumber;
+        public byte[] ConsolePartNumberBytes;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)]
         public byte[] Reserved;
         public ushort Privileges;
         public uint ConsoleType;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)]
-        public byte[] ManufacturingDate;
+        public byte[] ManufacturingDateBytes;
         public CONSOLE_PUBLIC_KEY ConsolePublicKey;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 256)]
         public byte[] Signature;
+
+        public string ConsolePartNumber
+        {
+            get
+            {
+                return Encoding.ASCII.GetString(ConsolePartNumberBytes);
+            }
+        }
+
+        public string ManufacturingDate
+        {
+            get
+            {
+                return Encoding.ASCII.GetString(ManufacturingDateBytes);
+            }
+        }
+
+        public string ConsoleTypeString
+        {
+            get
+            {
+                switch(ConsoleType)
+                {
+                    case 1:
+                        return "DevKit";
+                    case 2:
+                        return "Retail";
+                    case 0x80000001:
+                        return "DevKit (recovered/generated)";
+                    case 0x80000002:
+                        return "BetaKit";
+                }
+                return ConsoleType.ToString("X8");
+            }
+        }
 
         public bool IsStructureValid
         {

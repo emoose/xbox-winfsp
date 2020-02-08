@@ -140,6 +140,16 @@ namespace XboxWinFsp
         public byte[] ContentId;
         public uint SizeOfHeaders;
 
+        public XE_CONSOLE_SIGNATURE ConsoleSignature
+        {
+            get
+            {
+                var sig = Utility.BytesToStruct<XE_CONSOLE_SIGNATURE>(Signature);
+                sig.EndianSwap();
+                return sig;
+            }
+        }
+
         public string SignatureTypeString
         {
             get

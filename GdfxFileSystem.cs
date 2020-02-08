@@ -60,7 +60,7 @@ namespace XboxWinFsp
                 stream.Read(fileNameBytes, 0, DirEntry.FileNameLength);
                 FileName = Encoding.ASCII.GetString(fileNameBytes);
 
-                if(DirEntry.IsDirectory)
+                if (DirEntry.IsDirectory)
                     Children = fileSystem.GdfReadDirectory(DirEntry.FirstSector, DirEntry.FileSize, this);
 
                 // Align code from Velocity, seems to work great
@@ -182,7 +182,7 @@ namespace XboxWinFsp
             else
             {
                 var entry = GdfGetEntryFromPath(FileName);
-                if(entry != null)
+                if (entry != null)
                     FileAttributes1 = entry.DirEntry.FileAttributes;
             }
 
@@ -237,7 +237,7 @@ namespace XboxWinFsp
                 PBytesTransferred = 0;
                 return STATUS_END_OF_FILE;
             }
-            if(Offset + Length >= (UInt64)FileDesc.FileEntry.DirEntry.FileSize)
+            if (Offset + Length >= (UInt64)FileDesc.FileEntry.DirEntry.FileSize)
             {
                 Length = (uint) (FileDesc.FileEntry.DirEntry.FileSize - Offset);
             }
@@ -274,7 +274,7 @@ namespace XboxWinFsp
             {
                 stream.Position = addr;
                 gdfHeader = stream.ReadStruct<GDF_VOLUME_DESCRIPTOR>();
-                if(gdfHeader.IsValid)
+                if (gdfHeader.IsValid)
                 {
                     headerAddress = addr;
                     break;

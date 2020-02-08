@@ -32,6 +32,9 @@ namespace XboxWinFsp
             }
         }
 
+        XE_CONSOLE_SIGNATURE consoleSignature;
+        bool isConsoleSigned = false;
+
         XCONTENT_HEADER header;
         XCONTENT_METADATA metadata;
 
@@ -148,7 +151,7 @@ namespace XboxWinFsp
             if (Enumerator == null)
             {
                 var childArr = rootChildren;
-                if(FileDesc.FileEntry != null)
+                if (FileDesc.FileEntry != null)
                     childArr = FileDesc.FileEntry.Children;
 
                 Enumerator = new List<StfsEntry>(childArr).GetEnumerator();
@@ -260,7 +263,7 @@ namespace XboxWinFsp
                 Length = (uint)(FileDesc.FileEntry.DirEntry.FileSize - Offset);
             }
 
-            if(FileDesc.FileEntry.FakeData != null)
+            if (FileDesc.FileEntry.FakeData != null)
             {
                 byte[] bytes = new byte[Length];
                 lock (FileDesc.FileEntry.FakeData)
@@ -344,7 +347,13 @@ namespace XboxWinFsp
 
                 pecHeader = stream.ReadStruct<PEC_HEADER>();
                 pecHeader.EndianSwap();
-                if (!pecHeader.ConsoleSignature.IsStructureValid)
+                if (pecHeader.ConsoleSignature.IsStructureValid)
+                {
+                    isXContent = false;
+                    isConsoleSigned = true;
+                    consoleSignature = pecHeader.ConsoleSignature;
+                }
+                else
                 {
                     isXContent = true;
                     stream.Seek(0, SeekOrigin.Begin);
@@ -356,6 +365,12 @@ namespace XboxWinFsp
                         header.SignatureType != XCONTENT_HEADER.kSignatureTypeLiveBE &&
                         header.SignatureType != XCONTENT_HEADER.kSignatureTypePirsBE)
                         throw new FileSystemParseException("File has invalid header magic");
+
+                    if (header.SignatureType == XCONTENT_HEADER.kSignatureTypeConBE)
+                    {
+                        isConsoleSigned = true;
+                        consoleSignature = header.ConsoleSignature;
+                    }
 
                     stream.Position = 0x344;
                     metadata = stream.ReadStruct<XCONTENT_METADATA>();
@@ -484,6 +499,17 @@ namespace XboxWinFsp
             fakeEntry.DirEntry.DirectoryIndex = -1;
             fakeEntry.FakeData = new MemoryStream();
             var writer = new StreamWriter(fakeEntry.FakeData);
+            if (isConsoleSigned)
+            {
+                writer.WriteLine("[ConsoleSignature]");
+                writer.WriteLine($"ConsoleId = {BitConverter.ToString(consoleSignature.Cert.ConsoleId)}");
+                writer.WriteLine($"ConsolePartNumber = {consoleSignature.Cert.ConsolePartNumber}");
+                writer.WriteLine($"Privileges = 0x{consoleSignature.Cert.Privileges:X}");
+                writer.WriteLine($"ConsoleType = 0x{consoleSignature.Cert.ConsoleType:X8} ({consoleSignature.Cert.ConsoleTypeString})");
+                writer.WriteLine($"ManufacturingDate = {consoleSignature.Cert.ManufacturingDate}");
+
+                writer.WriteLine();
+            }
             if (isXContent)
             {
                 writer.WriteLine("[ExecutionId]");

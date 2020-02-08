@@ -101,7 +101,7 @@ namespace XboxWinFsp
                 if (Args.Length > I)
                     throw new CommandLineUsageException();
 
-                if(SetupFS)
+                if (SetupFS)
                 {
                     try
                     {
@@ -122,7 +122,7 @@ namespace XboxWinFsp
                         Console.WriteLine("Error: Failed to setup filesystems, maybe try running as admin?\r\n");
                     }
                 }
-                if(RemoveFS)
+                if (RemoveFS)
                 {
                     try
                     {
@@ -214,7 +214,7 @@ namespace XboxWinFsp
                 MountPoint = Host.MountPoint();
                 _Host = Host;
 
-                if(openExplorer)
+                if (openExplorer)
                     System.Diagnostics.Process.Start("explorer.exe", MountPoint);
 
                 Log(EVENTLOG_INFORMATION_TYPE, String.Format("{0}{1}{2} -p {3} -m {4}",
