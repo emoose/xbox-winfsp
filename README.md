@@ -1,4 +1,5 @@
-# xbox-winfsp
+# xbox-winfsp [![Actions Status](https://github.com/emoose/xbox-winfsp/workflows/CI/badge.svg)](https://github.com/emoose/xbox-winfsp/actions?query=workflow%3ACI)
+
 Brings native (read-only) support for the GDFX, STFS & FATX Xbox filesystems to Windows, thanks to the power of [WinFsp](https://github.com/billziss-gh/winfsp)!
 
 1. [Download](https://github.com/billziss-gh/winfsp/releases) & install WinFsp

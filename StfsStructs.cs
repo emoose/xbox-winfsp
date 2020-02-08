@@ -125,6 +125,126 @@ namespace XboxWinFsp
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    public struct XCONTENT_LICENSEE
+    {
+        public const ulong kTypeWindowsId = 3u << 48;
+        public const ulong kTypeXuid = 9u << 48;
+        public const ulong kTypeSerPrivileges = 0xB000u << 48;
+        public const ulong kTypeHvFlags = 0xC000u << 48;
+        public const ulong kTypeKeyVaultPrivileges = 0xD000u << 48;
+        public const ulong kTypeMediaFlags = 0xE000u << 48;
+        public const ulong kTypeConsoleId = 0xF000u << 48;
+        public const ulong kTypeUnrestricted = 0xFFFFu << 48;
+
+        public ulong LicenseeId;
+        public uint LicenseBits;
+        public uint LicenseFlags;
+
+        public bool IsWindowsIdLicense
+        {
+            get
+            {
+                return (LicenseeId & kTypeWindowsId) == kTypeWindowsId;
+            }
+        }
+
+        public bool IsXuidLicense
+        {
+            get
+            {
+                return (LicenseeId & kTypeXuid) == kTypeXuid;
+            }
+        }
+
+        public bool IsSerPrivilegesLicense
+        {
+            get
+            {
+                return (LicenseeId & kTypeSerPrivileges) == kTypeSerPrivileges;
+            }
+        }
+
+        public bool IsHvFlagsLicense
+        {
+            get
+            {
+                return (LicenseeId & kTypeHvFlags) == kTypeHvFlags;
+            }
+        }
+
+        public bool IsKeyVaultPrivilegesLicense
+        {
+            get
+            {
+                return (LicenseeId & kTypeKeyVaultPrivileges) == kTypeKeyVaultPrivileges;
+            }
+        }
+
+        public bool IsMediaFlagsLicense
+        {
+            get
+            {
+                return (LicenseeId & kTypeMediaFlags) == kTypeMediaFlags;
+            }
+        }
+
+        public bool IsConsoleIdLicense
+        {
+            get
+            {
+                return (LicenseeId & kTypeConsoleId) == kTypeConsoleId;
+            }
+        }
+
+        public bool IsUnrestrictedLicense
+        {
+            get
+            {
+                return (LicenseeId & kTypeUnrestricted) == kTypeUnrestricted;
+            }
+        }
+
+        public string LicenseType
+        {
+            get
+            {
+                if (IsUnrestrictedLicense)
+                    return "Unrestricted";
+                if (IsWindowsIdLicense)
+                    return "WindowsId";
+                if (IsXuidLicense)
+                    return "Xuid";
+                if (IsSerPrivilegesLicense)
+                    return "SerPrivileges";
+                if (IsHvFlagsLicense)
+                    return "HvFlags";
+                if (IsKeyVaultPrivilegesLicense)
+                    return "KeyVaultPrivileges";
+                if (IsMediaFlagsLicense)
+                    return "MediaFlags";
+                if (IsConsoleIdLicense)
+                    return "ConsoleId";
+                return "Unknown";
+            }
+        }
+
+        public bool IsValid
+        {
+            get
+            {
+                return LicenseeId != 0 || LicenseBits != 0 || LicenseFlags != 0;
+            }
+        }
+
+        public void EndianSwap()
+        {
+            LicenseeId = LicenseeId.EndianSwap();
+            LicenseBits = LicenseBits.EndianSwap();
+            LicenseFlags = LicenseFlags.EndianSwap();
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
     public struct XCONTENT_HEADER
     {
         public const uint kSignatureTypeConBE = 0x434F4E20;
@@ -134,8 +254,10 @@ namespace XboxWinFsp
         public uint SignatureType;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x228)]
         public byte[] Signature;
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x100)]
-        public byte[] LicenseDescriptors;
+
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x10)]
+        public XCONTENT_LICENSEE[] LicenseDescriptors;
+
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x14)]
         public byte[] ContentId;
         public uint SizeOfHeaders;
@@ -169,6 +291,10 @@ namespace XboxWinFsp
         public void EndianSwap()
         {
             SignatureType = SignatureType.EndianSwap();
+
+            for (int i = 0; i < 0x10; i++)
+                LicenseDescriptors[i].EndianSwap();
+
             SizeOfHeaders = SizeOfHeaders.EndianSwap();
         }
     }

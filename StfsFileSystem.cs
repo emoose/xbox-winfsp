@@ -210,6 +210,19 @@ namespace XboxWinFsp
                 writer.WriteLine($"ContentId = {BitConverter.ToString(Header.ContentId)}");
                 writer.WriteLine($"SizeOfHeaders = 0x{Header.SizeOfHeaders:X}");
 
+                for (int i = 0; i < Header.LicenseDescriptors.Length; i++)
+                {
+                    var license = Header.LicenseDescriptors[i];
+                    if (!license.IsValid)
+                        continue;
+
+                    writer.WriteLine();
+                    writer.WriteLine($"[XContentLicensee{i}]");
+                    writer.WriteLine($"LicenseeId = 0x{license.LicenseeId:X16} ({license.LicenseType})");
+                    writer.WriteLine($"LicenseBits = 0x{license.LicenseBits:X8}");
+                    writer.WriteLine($"LicenseFlags = 0x{license.LicenseFlags:X8}");
+                }
+
                 writer.WriteLine();
                 writer.WriteLine("[XContentMetadata]");
                 writer.WriteLine($"ContentType = 0x{Metadata.ContentType:X8}");
