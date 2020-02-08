@@ -24,7 +24,7 @@ namespace XboxWinFsp
         bool IsConsoleSigned = false;
 
         // All files in the package
-        FileEntry[] Children; 
+        FileEntry[] Children;
 
         // Values used in some block calculations, inited by StfsInit();
         long SizeOfHeaders = 0;
@@ -560,7 +560,7 @@ namespace XboxWinFsp
                 else if (!string.IsNullOrEmpty(Metadata.TitleName.String))
                     VolumeLabel = Metadata.TitleName.String;
 
-                return STATUS_SUCCESS;
+                return base.Init(Host0);
             }
             catch (FileSystemParseException)
             {
@@ -669,7 +669,6 @@ namespace XboxWinFsp
                     return (uint)read;
                 }
 
-                uint numBlocks = (length + kSectorSize - 1) / kSectorSize;
                 uint chainNum = (uint)(fileOffset / kSectorSize);
                 uint blockOffset = (uint)(fileOffset % kSectorSize);
 
