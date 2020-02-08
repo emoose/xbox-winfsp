@@ -17,5 +17,4 @@ Also due to STFS files not using file extensions, unfortunately the "Mount as Xb
 ## Todo
 - Add support for GDFX properly - the FS is actually designed as a binary tree, but this doesn't make use of it at all right now... [xbfuse](https://github.com/multimediamike/xbfuse) is a good example of how the tree should be handled.
 - Caching support would be nice, seems WinFsp's .NET API was updated with some caching/"FastIO" stuff lately, for some damn reason I installed & coded this against some ancient WinFsp build though >.>
-- Some way to display STFS metadata as a file would be awesome, maybe something like a false metadata.ini file on the root of the drive?
 - FATX ? Read-write ???
