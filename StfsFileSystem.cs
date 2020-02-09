@@ -15,6 +15,7 @@ namespace XboxWinFsp
 
         XCONTENT_HEADER Header;
         XCONTENT_METADATA Metadata;
+        XCONTENT_METADATA_INSTALLER InstallerMetadata;
         STF_VOLUME_DESCRIPTOR StfsVolumeDescriptor;
 
         PEC_HEADER PecHeader;
@@ -82,6 +83,13 @@ namespace XboxWinFsp
                 Stream.Position = 0x344;
                 Metadata = Stream.ReadStruct<XCONTENT_METADATA>();
                 Metadata.EndianSwap();
+
+                if (Header.SizeOfHeaders > 0x971A)
+                {
+                    Stream.Position = 0x971A;
+                    InstallerMetadata = Stream.ReadStruct<XCONTENT_METADATA_INSTALLER>();
+                    InstallerMetadata.EndianSwap();
+                }
 
                 if (Metadata.VolumeType != 0)
                     throw new FileSystemParseException("Package contains unsupported SVOD filesystem");
@@ -203,9 +211,9 @@ namespace XboxWinFsp
                 if (Metadata.ExecutionId.MediaId != 0)
                     writer.WriteLine($"MediaId = 0x{Metadata.ExecutionId.MediaId:X8}");
 
-                if (Metadata.ExecutionId.Version != "0.0.0.0")
+                if (Metadata.ExecutionId.Version.IsValid)
                     writer.WriteLine($"Version = v{Metadata.ExecutionId.Version}");
-                if (Metadata.ExecutionId.BaseVersion != "0.0.0.0")
+                if (Metadata.ExecutionId.BaseVersion.IsValid)
                     writer.WriteLine($"BaseVersion = v{Metadata.ExecutionId.BaseVersion}");
                 if (Metadata.ExecutionId.TitleId != 0)
                     writer.WriteLine($"TitleId = 0x{Metadata.ExecutionId.TitleId:X8}");
@@ -276,6 +284,24 @@ namespace XboxWinFsp
 
                 writer.WriteLine($"ThumbnailSize = 0x{Metadata.ThumbnailSize:X}");
                 writer.WriteLine($"TitleThumbnailSize = 0x{Metadata.TitleThumbnailSize:X}");
+
+                if(InstallerMetadata.IsValid)
+                {
+                    writer.WriteLine();
+                    writer.WriteLine("[XContentMetadataInstaller]");
+
+                    string type = "";
+                    if (InstallerMetadata.IsSystemUpdate)
+                        type = " (SystemUpdate)";
+                    else if (InstallerMetadata.IsTitleUpdate)
+                        type = " (TitleUpdate)";
+                    writer.WriteLine($"MetaDataType = 0x{InstallerMetadata.MetaDataType:X8}{type}");
+
+                    if (InstallerMetadata.CurrentVersion.IsValid)
+                        writer.WriteLine($"CurrentVersion = v{InstallerMetadata.CurrentVersion}");
+                    if (InstallerMetadata.NewVersion.IsValid)
+                        writer.WriteLine($"NewVersion = v{InstallerMetadata.NewVersion}");
+                }
             }
             else
             {

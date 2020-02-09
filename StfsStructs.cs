@@ -352,15 +352,37 @@ namespace XboxWinFsp
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    public struct VERSION
+    {
+        public byte MajorMinor;
+        public ushort Build;
+        public byte QFE;
+
+        public bool IsValid
+        {
+            get
+            {
+                return MajorMinor != 0 || Build != 0 || QFE != 0;
+            }
+        }
+
+        public override string ToString()
+        {
+            return $"{(MajorMinor >> 4) & 0xF}.{MajorMinor & 0xF}.{Build}.{QFE}";
+        }
+
+        public void EndianSwap()
+        {
+            Build = Build.EndianSwap();
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
     public struct XEX2_EXECUTION_ID
     {
         public uint MediaId;
-        public byte VersionMajorMinor;
-        public ushort VersionBuild;
-        public byte VersionQFE;
-        public byte BaseVersionMajorMinor;
-        public ushort BaseVersionBuild;
-        public byte BaseVersionQFE;
+        public VERSION Version;
+        public VERSION BaseVersion;
         public uint TitleId;
         public byte Platform;
         public byte ExecutableType;
@@ -368,26 +390,11 @@ namespace XboxWinFsp
         public byte DiscsInSet;
         public uint SaveGameId;
 
-        public string Version
-        {
-            get
-            {
-                return $"{(VersionMajorMinor >> 4) & 0xF}.{VersionMajorMinor & 0xF}.{VersionBuild}.{VersionQFE}";
-            }
-        }
-        public string BaseVersion
-        {
-            get
-            {
-                return $"{(BaseVersionMajorMinor >> 4) & 0xF}.{BaseVersionMajorMinor & 0xF}.{BaseVersionBuild}.{BaseVersionQFE}";
-            }
-        }
-
         public void EndianSwap()
         {
             MediaId = MediaId.EndianSwap();
-            VersionBuild = VersionBuild.EndianSwap();
-            BaseVersionBuild = BaseVersionBuild.EndianSwap();
+            Version.EndianSwap();
+            BaseVersion.EndianSwap();
             TitleId = TitleId.EndianSwap();
             SaveGameId = SaveGameId.EndianSwap();
         }
@@ -470,6 +477,48 @@ namespace XboxWinFsp
         public byte[] TitleThumbnail;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
         public UCHAR_80[] DescriptionEx;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack = 1)]
+    public struct XCONTENT_METADATA_INSTALLER
+    {
+        public const uint kTypeSystemUpdate = 0x53555044; // SUPD
+        public const uint kTypeTitleUpdate = 0x54555044; // TUPD
+
+        public uint MetaDataType;
+        public VERSION CurrentVersion;
+        public VERSION NewVersion;
+
+        public bool IsSystemUpdate
+        {
+            get
+            {
+                return MetaDataType == kTypeSystemUpdate;
+            }
+        }
+
+        public bool IsTitleUpdate
+        {
+            get
+            {
+                return MetaDataType == kTypeTitleUpdate;
+            }
+        }
+
+        public bool IsValid
+        {
+            get
+            {
+                return MetaDataType == kTypeSystemUpdate || MetaDataType == kTypeTitleUpdate;
+            }
+        }
+
+        public void EndianSwap()
+        {
+            MetaDataType = MetaDataType.EndianSwap();
+            CurrentVersion.EndianSwap();
+            NewVersion.EndianSwap();
+        }
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
