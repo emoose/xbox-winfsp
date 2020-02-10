@@ -13,9 +13,12 @@ namespace XboxWinFsp
         public const int kSectorSize = 0x1000;
         static readonly int[] kDataBlocksPerHashLevel = new int[] { 0xAA, 0x70E4, 0x4AF768 };
 
+        public bool SkipHashChecks = false;
+
         XCONTENT_HEADER Header;
         XCONTENT_METADATA Metadata;
         XCONTENT_METADATA_INSTALLER InstallerMetadata;
+
         STF_VOLUME_DESCRIPTOR StfsVolumeDescriptor;
 
         PEC_HEADER PecHeader;
@@ -47,59 +50,83 @@ namespace XboxWinFsp
         {
         }
 
+        public void SetVolumeDescriptor(STF_VOLUME_DESCRIPTOR descriptor)
+        {
+            StfsVolumeDescriptor = descriptor;
+        }
+
         void StfsInit()
         {
-            PecHeader = Stream.ReadStruct<PEC_HEADER>();
-            PecHeader.EndianSwap();
-            if (PecHeader.ConsoleSignature.IsStructureValid)
-            {
-                IsXContent = false;
-                IsConsoleSigned = true;
-                ConsoleSignature = PecHeader.ConsoleSignature;
-                StfsVolumeDescriptor = PecHeader.StfsVolumeDescriptor;
-            }
-            else
-            {
-                IsXContent = true;
-                Stream.Seek(0, SeekOrigin.Begin);
-
-                Header = Stream.ReadStruct<XCONTENT_HEADER>();
-                Header.EndianSwap();
-
-                if (Header.SignatureType != XCONTENT_HEADER.kSignatureTypeConBE &&
-                    Header.SignatureType != XCONTENT_HEADER.kSignatureTypeLiveBE &&
-                    Header.SignatureType != XCONTENT_HEADER.kSignatureTypePirsBE)
-                    throw new FileSystemParseException("File has invalid header magic");
-
-                if (Header.SizeOfHeaders == 0)
-                    throw new FileSystemParseException("Package doesn't contain STFS filesystem");
-
-                if (Header.SignatureType == XCONTENT_HEADER.kSignatureTypeConBE)
-                {
-                    IsConsoleSigned = true;
-                    ConsoleSignature = Header.ConsoleSignature;
-                }
-
-                Stream.Position = 0x344;
-                Metadata = Stream.ReadStruct<XCONTENT_METADATA>();
-                Metadata.EndianSwap();
-
-                if (Header.SizeOfHeaders > 0x971A)
-                {
-                    Stream.Position = 0x971A;
-                    InstallerMetadata = Stream.ReadStruct<XCONTENT_METADATA_INSTALLER>();
-                    InstallerMetadata.EndianSwap();
-                }
-
-                if (Metadata.VolumeType != 0)
-                    throw new FileSystemParseException("Package contains unsupported SVOD filesystem");
-
-                StfsVolumeDescriptor = Metadata.StfsVolumeDescriptor;
-            }
-
+            // Read in XContent/PEC header if the volume descriptor isn't already set:
             if (StfsVolumeDescriptor.DescriptorLength != 0x24)
-                throw new FileSystemParseException("File has invalid descriptor length");
+            {
+                var fatHeader = Stream.ReadStruct<FAT_VOLUME_METADATA>();
+                Stream.Position -= Marshal.SizeOf(fatHeader.GetType());
+                if (fatHeader.Signature == FatxFileSystem.kMagicFatx || fatHeader.Signature == FatxFileSystem.kMagicFatxBE)
+                {
+                    // STFC partition (uses FATX header for some reason, but has an invalid chainmap)
+                    // TODO: find where the descriptor is located (the HDD dump I'm testing with might be missing the first cluster)
+                    // For now we'll disable hash checks & use a default descriptor...
+                    StfsVolumeDescriptor = STF_VOLUME_DESCRIPTOR.Default();
+                    // Should be fine to set directory block count to 100, it'll exit out once the hash chain ends
+                    StfsVolumeDescriptor.DirectoryAllocationBlocks = 100;
+                    // We don't have a volume descriptor, so we don't have a root hash: disable hash checks ;_;
+                    SkipHashChecks = true;
+                }
+                else
+                {
+                    PecHeader = Stream.ReadStruct<PEC_HEADER>();
+                    PecHeader.EndianSwap();
+                    if (PecHeader.ConsoleSignature.IsStructureValid)
+                    {
+                        IsXContent = false;
+                        IsConsoleSigned = true;
+                        ConsoleSignature = PecHeader.ConsoleSignature;
+                        StfsVolumeDescriptor = PecHeader.StfsVolumeDescriptor;
+                    }
+                    else
+                    {
+                        IsXContent = true;
+                        Stream.Seek(0, SeekOrigin.Begin);
 
+                        Header = Stream.ReadStruct<XCONTENT_HEADER>();
+                        Header.EndianSwap();
+
+                        if (Header.SignatureType != XCONTENT_HEADER.kSignatureTypeConBE &&
+                            Header.SignatureType != XCONTENT_HEADER.kSignatureTypeLiveBE &&
+                            Header.SignatureType != XCONTENT_HEADER.kSignatureTypePirsBE)
+                            throw new FileSystemParseException("File has invalid header magic");
+
+                        if (Header.SizeOfHeaders == 0)
+                            throw new FileSystemParseException("Package doesn't contain STFS filesystem");
+
+                        if (Header.SignatureType == XCONTENT_HEADER.kSignatureTypeConBE)
+                        {
+                            IsConsoleSigned = true;
+                            ConsoleSignature = Header.ConsoleSignature;
+                        }
+
+                        Stream.Position = 0x344;
+                        Metadata = Stream.ReadStruct<XCONTENT_METADATA>();
+                        Metadata.EndianSwap();
+
+                        if (Header.SizeOfHeaders > 0x971A)
+                        {
+                            Stream.Position = 0x971A;
+                            InstallerMetadata = Stream.ReadStruct<XCONTENT_METADATA_INSTALLER>();
+                            InstallerMetadata.EndianSwap();
+                        }
+
+                        if (Metadata.VolumeType != 0)
+                            throw new FileSystemParseException("Package contains unsupported SVOD filesystem");
+
+                        StfsVolumeDescriptor = Metadata.StfsVolumeDescriptor;
+                    }
+                }
+
+                if (StfsVolumeDescriptor.DescriptorLength != 0x24)
+                    throw new FileSystemParseException("File has invalid descriptor length");
+            }
             StfsInitValues();
 
             // Read in our directory entries...
@@ -210,7 +237,6 @@ namespace XboxWinFsp
 
                 if (Metadata.ExecutionId.MediaId != 0)
                     writer.WriteLine($"MediaId = 0x{Metadata.ExecutionId.MediaId:X8}");
-
                 if (Metadata.ExecutionId.Version.IsValid)
                     writer.WriteLine($"Version = v{Metadata.ExecutionId.Version}");
                 if (Metadata.ExecutionId.BaseVersion.IsValid)
@@ -305,19 +331,22 @@ namespace XboxWinFsp
             }
             else
             {
-                writer.WriteLine("[PECHeader]");
-                writer.WriteLine($"ContentId = {BitConverter.ToString(PecHeader.ContentId)}");
-                if (PecHeader.Unknown != 0)
-                    writer.WriteLine($"Unknown = 0x{PecHeader.Unknown:X16}");
-                if (PecHeader.Unknown2 != 0)
-                    writer.WriteLine($"Unknown2 = 0x{PecHeader.Unknown2:X8}");
-                if (PecHeader.Creator != 0)
-                    writer.WriteLine($"Creator = 0x{PecHeader.Creator:X16}");
-                if (PecHeader.ConsoleIdsCount != 0)
-                    writer.WriteLine($"ConsoleIdsCount = {PecHeader.ConsoleIdsCount}");
-                for (int i = 0; i < 100; i++)
-                    if (!PecHeader.ConsoleIds[i].Bytes.IsNull())
-                        writer.WriteLine($"ConsoleId[{i}] = {BitConverter.ToString(PecHeader.ConsoleIds[i].Bytes)}");
+                if (PecHeader.ContentId != null)
+                {
+                    writer.WriteLine("[PECHeader]");
+                    writer.WriteLine($"ContentId = {BitConverter.ToString(PecHeader.ContentId)}");
+                    if (PecHeader.Unknown != 0)
+                        writer.WriteLine($"Unknown = 0x{PecHeader.Unknown:X16}");
+                    if (PecHeader.Unknown2 != 0)
+                        writer.WriteLine($"Unknown2 = 0x{PecHeader.Unknown2:X8}");
+                    if (PecHeader.Creator != 0)
+                        writer.WriteLine($"Creator = 0x{PecHeader.Creator:X16}");
+                    if (PecHeader.ConsoleIdsCount != 0)
+                        writer.WriteLine($"ConsoleIdsCount = {PecHeader.ConsoleIdsCount}");
+                    for (int i = 0; i < 100; i++)
+                        if (!PecHeader.ConsoleIds[i].Bytes.IsNull())
+                            writer.WriteLine($"ConsoleId[{i}] = {BitConverter.ToString(PecHeader.ConsoleIds[i].Bytes)}");
+                }
             }
 
             writer.WriteLine();
@@ -490,7 +519,7 @@ namespace XboxWinFsp
                 hashBlock.EndianSwap();
                 CachedTables.Add(hashOffset, hashBlock);
 
-                if (!isInvalidTable)
+                if (!isInvalidTable && !SkipHashChecks)
                 {
                     // It's not cached and not in the invalid table array yet... lets check it
                     byte[] hash;
@@ -585,18 +614,25 @@ namespace XboxWinFsp
                 {
                     Host.VolumeSerialNumber = BitConverter.ToUInt32(Header.ContentId, 0);
                     Host.FileSystemName = $"STFS ({Header.SignatureTypeString})";
+
+                    // Update volume label if we have one, otherwise it defaults to input filename
+                    if (!string.IsNullOrEmpty(Metadata.DisplayName[0].String))
+                        VolumeLabel = Metadata.DisplayName[0].String;
+                    else if (!string.IsNullOrEmpty(Metadata.TitleName.String))
+                        VolumeLabel = Metadata.TitleName.String;
                 }
                 else
                 {
-                    Host.VolumeSerialNumber = BitConverter.ToUInt32(PecHeader.ContentId, 0);
-                    Host.FileSystemName = $"STFS (PEC)";
+                    if (PecHeader.ContentId != null)
+                    {
+                        Host.VolumeSerialNumber = BitConverter.ToUInt32(PecHeader.ContentId, 0);
+                        Host.FileSystemName = $"STFS (PEC)";
+                    }
+                    else
+                    {
+                        Host.FileSystemName = $"STFS (STFC)";
+                    }
                 }
-
-                // Update volume label if we have one, otherwise it defaults to input filename
-                if (!string.IsNullOrEmpty(Metadata.DisplayName[0].String))
-                    VolumeLabel = Metadata.DisplayName[0].String;
-                else if (!string.IsNullOrEmpty(Metadata.TitleName.String))
-                    VolumeLabel = Metadata.TitleName.String;
 
                 return base.Init(Host0);
             }

@@ -14,6 +14,16 @@ namespace XboxWinFsp
         public const uint kMagicFatx = 0x58544146;
         public const uint kMagicFatxBE = 0x46415458;
 
+        public const uint kClusterFree = 0;
+        public const uint kClusterReserved = 0xfffffff0;
+        public const uint kClusterBad = 0xfffffff7;
+        public const uint kClusterMedia = 0xfffffff8;
+        public const uint kClusterLast = 0xffffffff;
+
+        public const uint kCluster16Reserved = 0xfff0;
+        public const uint kCluster16Bad = 0xfff7;
+        public const uint kCluster16Media = 0xfff8;
+
         const uint kReservedChainMapEntries = 1; // first entry in chainmap is reserved (doesn't actually exist)
         const uint kFatxPageSize = 0x1000; // size of a cache-page?
 
@@ -111,6 +121,9 @@ namespace XboxWinFsp
                 if (ChainMap[i] == 0)
                     numFree++;
             }
+
+            if(ChainMap[0] != kClusterMedia && ChainMap[0] != 0xFFFFF8FF) // 0xFFFFF8FF = weird BE 16-bit value after swapping/extending...
+                throw new FileSystemParseException($"Invalid reserved-chainmap-entry value");
 
             // Calculate byte totals
             BytesFree = numFree * ClusterSize;
@@ -475,7 +488,10 @@ namespace XboxWinFsp
         {
             get
             {
-                return Encoding.ASCII.GetString(FileNameBytes, 0, FileNameLength).Trim(new char[] { '\0', (char)0xff });
+                if(IsDeleted) // TODO: maybe we should hide deleted files?
+                    return "_" + Encoding.ASCII.GetString(FileNameBytes).Trim(new char[] { '\0', (char)0xff });
+                else
+                    return Encoding.ASCII.GetString(FileNameBytes, 0, FileNameLength).Trim(new char[] { '\0', (char)0xff });
             }
             set
             {

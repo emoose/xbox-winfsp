@@ -43,6 +43,22 @@ namespace XboxWinFsp
         public uint NumberOfTotalBlocks;
         public uint NumberOfFreeBlocks;
 
+        public static STF_VOLUME_DESCRIPTOR Default()
+        {
+            var descriptor = new STF_VOLUME_DESCRIPTOR();
+            descriptor.DescriptorLength = 0x24;
+            descriptor.Version = 0;
+            descriptor.Flags = 0;
+            descriptor.DirectoryAllocationBlocks = 1;
+            descriptor.DirectoryFirstBlockNumber0 = 
+                descriptor.DirectoryFirstBlockNumber1 =
+                descriptor.DirectoryFirstBlockNumber2 = 0;
+            descriptor.RootHash = new byte[0x14];
+            descriptor.NumberOfTotalBlocks = 1;
+            descriptor.NumberOfFreeBlocks = 0;
+            return descriptor;
+        }
+
         public bool ReadOnlyFormat
         {
             get

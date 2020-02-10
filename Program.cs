@@ -208,11 +208,13 @@ namespace XboxWinFsp
                 if (Host.Mount(MountPoint, null, true, DebugFlags) < 0)
                 {
                     Fatx = null;
+                    fileStream.Position = 0;
                     Host = new FileSystemHost(Stfs = new StfsFileSystem(fileStream, ImagePath));
                     Host.Prefix = VolumePrefix;
                     if (Host.Mount(MountPoint, null, true, DebugFlags) < 0)
                     {
                         Stfs = null;
+                        fileStream.Position = 0;
                         Host = new FileSystemHost(Gdfx = new GdfxFileSystem(fileStream, ImagePath));
                         Host.Prefix = VolumePrefix;
                         if (Host.Mount(MountPoint, null, true, DebugFlags) < 0)
