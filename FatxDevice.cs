@@ -183,7 +183,6 @@ namespace XboxWinFsp
                 Host.Prefix = null;
                 if (Host.Mount(null, null, false, 0xffffffff) < 0)
                 {
-                    Console.WriteLine($"failed: {partition.Key:X}");
                     if (true)
                     {
                         Stream.Position = partition.Key;

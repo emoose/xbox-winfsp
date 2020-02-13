@@ -2,6 +2,7 @@
 using System.IO;
 using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 
 namespace XboxWinFsp
 {
@@ -251,6 +252,12 @@ namespace XboxWinFsp
             "Dutch",
             "Simp.Chinese"
         };
+
+        public static bool IsAdministrator()
+        {
+            return (new WindowsPrincipal(WindowsIdentity.GetCurrent()))
+                      .IsInRole(WindowsBuiltInRole.Administrator);
+        }
 
         public static ulong RoundToPages(ulong number, ulong pageSize)
         {

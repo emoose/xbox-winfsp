@@ -230,24 +230,48 @@ namespace XboxWinFsp
 
                     if (openExplorer)
                         System.Diagnostics.Process.Start("explorer.exe", MountPoint);
+
+                    Log(EVENTLOG_INFORMATION_TYPE, String.Format("{0}{1}{2} -p {3} -m {4}",
+                        PROGNAME,
+                        null != VolumePrefix && 0 < VolumePrefix.Length ? " -u " : "",
+                            null != VolumePrefix && 0 < VolumePrefix.Length ? VolumePrefix : "",
+                        ImagePath,
+                        MountPoint));
+
+                    Console.Title = $"{MountPoint} - xbox-winfsp";
+                    Console.WriteLine($"\r\n{ImagePath}:\r\n Mounted to {MountPoint}, hit CTRL+C in this window to unmount.\r\n");
                 }
                 else
                 {
-                    var loader = new FatxDevice(2);
-                    _Hosts = loader.LoadPartitions();
+                    _Hosts = new List<FileSystemHost>();
+                    string connectedDrives = "";
+                    if (Utility.IsAdministrator())
+                    {
+                        Log(EVENTLOG_INFORMATION_TYPE, "Loading Xbox partitions from physical drives...");
+                        for (int i = 1; i < 11; i++)
+                        {
+                            try
+                            {
+                                var device = new FatxDevice(i);
+                                if (!device.IsFatxDevice())
+                                    continue;
+                                var partitions = device.LoadPartitions();
+                                if (partitions.Count > 0)
+                                    connectedDrives += $"{i} ";
+
+                                _Hosts.AddRange(partitions);
+                            }
+                            catch
+                            { }
+                        }
+                        Log(EVENTLOG_INFORMATION_TYPE, $"Loaded {_Hosts.Count} Xbox partitions from drives.");
+                    }
                     if (_Hosts.Count <= 0)
                         throw new CommandLineUsageException();
+
+                    Console.Title = $"HDD {connectedDrives}- xbox-winfsp";
+                    Console.WriteLine("\r\nHit CTRL+C in this window to unmount.");
                 }
-
-                Log(EVENTLOG_INFORMATION_TYPE, String.Format("{0}{1}{2} -p {3} -m {4}",
-                    PROGNAME,
-                    null != VolumePrefix && 0 < VolumePrefix.Length ? " -u " : "",
-                        null != VolumePrefix && 0 < VolumePrefix.Length ? VolumePrefix : "",
-                    ImagePath,
-                    MountPoint));
-
-                Console.Title = $"{MountPoint} - xbox-winfsp";
-                Console.WriteLine($"\r\n{ImagePath}:\r\n Mounted to {MountPoint}, hit CTRL+C in this window to unmount.\r\n");
             }
             catch (CommandLineUsageException ex)
             {
