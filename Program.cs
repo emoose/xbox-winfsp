@@ -25,11 +25,15 @@ using Microsoft.Win32;
 
 using Fsp;
 using System.Security.AccessControl;
+using System.Collections.Generic;
 
 namespace XboxWinFsp
 {
     class XboxFsService : Service
     {
+        private FileSystemHost _Host;
+        private List<FileSystemHost> _Hosts;
+
         private class CommandLineUsageException : Exception
         {
             public CommandLineUsageException(String Message = null) : base(Message)
@@ -72,31 +76,31 @@ namespace XboxWinFsp
                         break;
                     switch (Arg[1])
                     {
-                    case '?':
-                        throw new CommandLineUsageException();
-                    case 'd':
-                        argtol(Args, ref I, ref DebugFlags);
-                        break;
-                    case 'D':
-                        argtos(Args, ref I, ref DebugLogFile);
-                        break;
-                    case 'm':
-                        argtos(Args, ref I, ref MountPoint);
-                        break;
-                    case 'i':
-                        argtos(Args, ref I, ref ImagePath);
-                        break;
-                    case 'u':
-                        argtos(Args, ref I, ref VolumePrefix);
-                        break;
-                    case 's':
-                        SetupFS = true;
-                        break;
-                    case 'r':
-                        RemoveFS = true;
-                        break;
-                    default:
-                        throw new CommandLineUsageException();
+                        case '?':
+                            throw new CommandLineUsageException();
+                        case 'd':
+                            argtol(Args, ref I, ref DebugFlags);
+                            break;
+                        case 'D':
+                            argtos(Args, ref I, ref DebugLogFile);
+                            break;
+                        case 'm':
+                            argtos(Args, ref I, ref MountPoint);
+                            break;
+                        case 'i':
+                            argtos(Args, ref I, ref ImagePath);
+                            break;
+                        case 'u':
+                            argtos(Args, ref I, ref VolumePrefix);
+                            break;
+                        case 's':
+                            SetupFS = true;
+                            break;
+                        case 'r':
+                            RemoveFS = true;
+                            break;
+                        default:
+                            throw new CommandLineUsageException();
                     }
                 }
 
@@ -186,47 +190,54 @@ namespace XboxWinFsp
                     }
                 }
 
-                if (string.IsNullOrEmpty(ImagePath) || string.IsNullOrEmpty(MountPoint))
-                    throw new CommandLineUsageException();
-
                 if (null != DebugLogFile)
                     if (0 > FileSystemHost.SetDebugLogFile(DebugLogFile))
                         throw new CommandLineUsageException("cannot open debug log file");
 
-                // For some reason WinFsp needs MountPoint to be null for wildcard to work without elevation...
-                bool openExplorer = false;
-                if (MountPoint == "*")
+                if (!string.IsNullOrEmpty(ImagePath) && !string.IsNullOrEmpty(MountPoint))
                 {
-                    MountPoint = null;
-                    openExplorer = true; // Open mounted drive in explorer if the mountPoint is wildcard - QoL :)
-                }
+                    // For some reason WinFsp needs MountPoint to be null for wildcard to work without elevation...
+                    bool openExplorer = false;
+                    if (MountPoint == "*")
+                    {
+                        MountPoint = null;
+                        openExplorer = true; // Open mounted drive in explorer if the mountPoint is wildcard - QoL :)
+                    }
 
-                var fileStream = File.OpenRead(ImagePath);
+                    var fileStream = File.OpenRead(ImagePath);
 
-                Host = new FileSystemHost(Fatx = new FatxFileSystem(fileStream, ImagePath));
-                Host.Prefix = VolumePrefix;
-                if (Host.Mount(MountPoint, null, true, DebugFlags) < 0)
-                {
-                    Fatx = null;
-                    fileStream.Position = 0;
-                    Host = new FileSystemHost(Stfs = new StfsFileSystem(fileStream, ImagePath));
+                    Host = new FileSystemHost(Fatx = new FatxFileSystem(fileStream, ImagePath));
                     Host.Prefix = VolumePrefix;
                     if (Host.Mount(MountPoint, null, true, DebugFlags) < 0)
                     {
-                        Stfs = null;
+                        Fatx = null;
                         fileStream.Position = 0;
-                        Host = new FileSystemHost(Gdfx = new GdfxFileSystem(fileStream, ImagePath));
+                        Host = new FileSystemHost(Stfs = new StfsFileSystem(fileStream, ImagePath));
                         Host.Prefix = VolumePrefix;
                         if (Host.Mount(MountPoint, null, true, DebugFlags) < 0)
-                            throw new IOException("cannot mount file system");
+                        {
+                            Stfs = null;
+                            fileStream.Position = 0;
+                            Host = new FileSystemHost(Gdfx = new GdfxFileSystem(fileStream, ImagePath));
+                            Host.Prefix = VolumePrefix;
+                            if (Host.Mount(MountPoint, null, true, DebugFlags) < 0)
+                                throw new IOException("cannot mount file system");
+                        }
                     }
+
+                    MountPoint = Host.MountPoint();
+                    _Host = Host;
+
+                    if (openExplorer)
+                        System.Diagnostics.Process.Start("explorer.exe", MountPoint);
                 }
-
-                MountPoint = Host.MountPoint();
-                _Host = Host;
-
-                if (openExplorer)
-                    System.Diagnostics.Process.Start("explorer.exe", MountPoint);
+                else
+                {
+                    var loader = new FatxDevice(2);
+                    _Hosts = loader.LoadPartitions();
+                    if (_Hosts.Count <= 0)
+                        throw new CommandLineUsageException();
+                }
 
                 Log(EVENTLOG_INFORMATION_TYPE, String.Format("{0}{1}{2} -p {3} -m {4}",
                     PROGNAME,
@@ -256,11 +267,12 @@ namespace XboxWinFsp
                     PROGNAME)); ;
                 throw;
             }
-            catch (Exception ex)
-            {
-                Log(EVENTLOG_ERROR_TYPE, String.Format("{0}", ex.Message));
-                throw;
-            }
+            //}
+            //catch (Exception ex)
+            //{
+           //     Log(EVENTLOG_ERROR_TYPE, String.Format("{0}", ex.Message));
+           //     throw;
+           // }
         }
         protected override void OnStop()
         {
@@ -283,8 +295,6 @@ namespace XboxWinFsp
             else
                 throw new CommandLineUsageException();
         }
-
-        private FileSystemHost _Host;
     }
 
     class Program

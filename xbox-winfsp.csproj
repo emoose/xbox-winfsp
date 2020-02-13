@@ -62,6 +62,8 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="FatxFileSystem.cs" />
+    <Compile Include="AlignedStream.cs" />
+    <Compile Include="FatxDevice.cs" />
     <Compile Include="GdfxFileSystem.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="ReadOnlyFileSystem.cs" />

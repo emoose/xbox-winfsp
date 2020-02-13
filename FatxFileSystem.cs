@@ -30,6 +30,8 @@ namespace XboxWinFsp
         FAT_VOLUME_METADATA FatHeader;
         bool IsBigEndian = false;
 
+        long PartitionSize = 0;
+
         long Position = 0;
         long MaxSize = 0;
         long ClusterCount = 0; // is +1 of the actual count, because first cluster is kReservedChainMapEntries..
@@ -39,7 +41,7 @@ namespace XboxWinFsp
         // The earliest CreationTime in all the file entries
         DateTime CreationTime = DateTime.Now;
 
-        object StreamLock = new object();
+        BinaryReader reader;
 
         bool IsFatx32
         {
@@ -57,16 +59,21 @@ namespace XboxWinFsp
             }
         }
 
-        public FatxFileSystem(Stream stream, string inputPath) : base(stream, inputPath, kSectorSize)
+        public FatxFileSystem(Stream stream, string inputPath, long partitionOffset = 0, long partitionSize = 0) : base(stream, inputPath, kSectorSize)
         {
-
+            Position = partitionOffset;
+            PartitionSize = partitionSize;
+            reader = new BinaryReader(stream);
         }
 
         void FatxInit()
         {
-            Position = Stream.Position;
+            if (Position == 0)
+                Position = Stream.Position;
+            if (PartitionSize == 0)
+                PartitionSize = Stream.Length;
 
-            FatHeader = Stream.ReadStruct<FAT_VOLUME_METADATA>();
+            FatHeader = reader.ReadStruct<FAT_VOLUME_METADATA>();
             if (FatHeader.Signature == kMagicFatxBE)
             {
                 IsBigEndian = true;
@@ -94,23 +101,24 @@ namespace XboxWinFsp
             // (xlaunch.fdf can be tiny, 1MB or so, but the kernel treats it like it's 0x1000000 bytes, so that it can expand as needed)
             // (so we have to do the same in order for the chainMap calculations below to make sense)
             // 0x1000000 seems to be the smallest out there, so we'll use that
-            MaxSize = Math.Max(0x1000000, Stream.Length);
+            MaxSize = Math.Max(0x1000000, PartitionSize);
             ClusterCount = (MaxSize / ClusterSize) + kReservedChainMapEntries;
 
             // Read in the chainmap...
             Stream.Position = Position + kFatxPageSize;
 
             ChainMap = new uint[ClusterCount];
-            byte[] data = new byte[4];
-
             uint numFree = 0;
+
+            int entrySize = (IsFatx32 ? 4 : 2);
+            byte[] chainMapBytes = new byte[ClusterCount * entrySize];
+            Stream.Read(chainMapBytes, 0, (int)ClusterCount * entrySize);
             for (uint i = 0; i < ClusterCount; i++)
             {
-                Stream.Read(data, 0, IsFatx32 ? 4 : 2);
                 if (IsBigEndian)
-                    Array.Reverse(data, 0, IsFatx32 ? 4 : 2);
+                    Array.Reverse(chainMapBytes, (int)(i * entrySize), entrySize);
 
-                ChainMap[i] = IsFatx32 ? BitConverter.ToUInt32(data, 0) : BitConverter.ToUInt16(data, 0);
+                ChainMap[i] = IsFatx32 ? BitConverter.ToUInt32(chainMapBytes, (int)(i * entrySize)) : BitConverter.ToUInt16(chainMapBytes, (int)(i * entrySize));
 
                 // Extend 16-bit end-of-chain values
                 // TODO: BE 16-bit kCluster16XXX values seem messed up?
@@ -122,7 +130,7 @@ namespace XboxWinFsp
                     numFree++;
             }
 
-            if(ChainMap[0] != kClusterMedia && ChainMap[0] != 0xFFFFF8FF) // 0xFFFFF8FF = weird BE 16-bit value after swapping/extending...
+            if (ChainMap[0] != kClusterMedia && ChainMap[0] != 0xFFFFF8FF) // 0xFFFFF8FF = weird BE 16-bit value after swapping/extending...
                 throw new FileSystemParseException($"Invalid reserved-chainmap-entry value");
 
             // Calculate byte totals
@@ -140,10 +148,10 @@ namespace XboxWinFsp
 
         List<IFileEntry> FatxReadDirectory(uint directoryCluster, FileEntry parent)
         {
-            long curPos = Stream.Position;
             var entries = new List<IFileEntry>();
 
             var directoryChain = FatxGetClusterChain(directoryCluster);
+            long addrStart = FatxClusterToAddress(directoryCluster);
             for (int i = 0; i < directoryChain.Length; i++)
             {
                 var cluster = directoryChain[i];
@@ -153,7 +161,7 @@ namespace XboxWinFsp
                 for (int y = 0; y < (ClusterSize / 0x40); y++)
                 {
                     var entry = new FileEntry(parent, this);
-                    if (!entry.Read(Stream))
+                    if (!entry.Read(reader))
                     {
                         noMoreEntries = true;
                         break;
@@ -162,19 +170,32 @@ namespace XboxWinFsp
                     if (entry.CreationTime < CreationTime)
                         CreationTime = entry.CreationTime;
 
-                    if (entry.IsDirectory)
-                        entry.Children = FatxReadDirectory(entry.DirEntry.FirstCluster, entry);
-
-                    entries.Add(entry);
+                    if (!entry.DirEntry.IsDeleted)
+                        entries.Add(entry);
                 }
 
                 if (noMoreEntries)
                     break;
             }
 
+            // Go back through and read directories
+            foreach(var entry in entries)
+            {
+                var fileEntry = (FileEntry)entry;
+                if (fileEntry.IsDirectory && !fileEntry.DirEntry.IsDeleted)
+                    try
+                    {
+                        fileEntry.Children = FatxReadDirectory(fileEntry.DirEntry.FirstCluster, fileEntry);
+                    }
+                    catch
+                    {
+                        fileEntry.Children = new List<IFileEntry>();
+                        break;
+                    }
+            }
+
             entries.Sort((x, y) => x.Name.CompareTo(y.Name));
 
-            Stream.Position = curPos;
             return entries;
         }
 
@@ -212,9 +233,16 @@ namespace XboxWinFsp
                 Host.CasePreservedNames = true;
                 Host.UnicodeOnDisk = false;
                 Host.PersistentAcls = false;
-                Host.PassQueryDirectoryPattern = true;
-                Host.FlushAndPurgeOnCleanup = true;
-                Host.VolumeCreationTime = (ulong)CreationTime.ToFileTimeUtc();
+                Host.PassQueryDirectoryPattern = false;
+                Host.FlushAndPurgeOnCleanup = false;
+                try
+                {
+                    Host.VolumeCreationTime = (ulong)CreationTime.ToFileTimeUtc();
+                }
+                catch
+                {
+                    Host.VolumeCreationTime = 0;
+                }
                 Host.VolumeSerialNumber = FatHeader.SerialNumber;
                 Host.FileSystemName = $"FATX{(IsFatx32 ? "32" : "16")}";
 
@@ -311,9 +339,9 @@ namespace XboxWinFsp
                 FileSystem = fileSystem;
             }
 
-            public bool Read(Stream stream)
+            public bool Read(BinaryReader reader)
             {
-                DirEntry = stream.ReadStruct<FAT_DIRECTORY_ENTRY>();
+                DirEntry = reader.ReadStruct<FAT_DIRECTORY_ENTRY>();
                 if (FileSystem.IsBigEndian)
                     DirEntry.EndianSwap();
                 return DirEntry.IsValid;
@@ -355,7 +383,7 @@ namespace XboxWinFsp
                         numRead = FileSystem.Stream.Read(bytes, 0, readAmt);
                     }
 
-                    Marshal.Copy(bytes, 0, buffer, numRead);
+                    Marshal.Copy(bytes, 0, buffer, readAmt);
                     transferred += (uint)numRead;
 
                     if (clusterOffset + readAmt >= FileSystem.ClusterSize)
@@ -368,9 +396,15 @@ namespace XboxWinFsp
                 }
                 return transferred;
             }
+
+            public override string ToString()
+            {
+                return $"{(IsDirectory ? "D" : "F")} {Name} 0x{Size:X}";
+            }
         }
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
     public struct FAT_VOLUME_METADATA
     {
         public uint Signature;
@@ -379,8 +413,16 @@ namespace XboxWinFsp
         public uint RootDirFirstCluster;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 64)]
         public byte[] VolumeNameBytes;
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 2048)]
-        public byte[] OnlineData;
+      //  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 2048)]
+      //  public byte[] OnlineData;
+
+        public bool IsValid
+        {
+            get
+            {
+                return Signature == FatxFileSystem.kMagicFatx || Signature == FatxFileSystem.kMagicFatxBE;
+            }
+        }
 
         public string VolumeName
         {
@@ -402,6 +444,7 @@ namespace XboxWinFsp
         }
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
     public struct FAT_DIRECTORY_ENTRY
     {
         // mostly the same values as System.IO.FileAttributes... we'll keep them here just in case
@@ -488,7 +531,7 @@ namespace XboxWinFsp
         {
             get
             {
-                if(IsDeleted) // TODO: maybe we should hide deleted files?
+                if (IsDeleted) // TODO: maybe we should hide deleted files?
                     return "_" + Encoding.ASCII.GetString(FileNameBytes).Trim(new char[] { '\0', (char)0xff });
                 else
                     return Encoding.ASCII.GetString(FileNameBytes, 0, FileNameLength).Trim(new char[] { '\0', (char)0xff });

@@ -651,7 +651,7 @@ namespace XboxWinFsp
         {
             get
             {
-                return Flags != 0;
+                return Flags != 0 && FileNameLength > 0 && FileNameLength < 41 && FileName.IndexOfAny(StfsFileSystem.kInvalidFilenameChars) < 0;
             }
         }
 
@@ -666,6 +666,42 @@ namespace XboxWinFsp
         public override string ToString()
         {
             return FileName;
+        }
+    }
+
+    // AKA "Josh" sector, at sector 4 / 0x800 of HDD
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    public struct CACHE_PARTITION_DATA
+    {
+        public const uint kMagicJosh = 0x4A6F7368; // "Josh"
+
+        public uint CacheSignature;
+        public XE_CONSOLE_SIGNATURE Signature;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 2)]
+        public STF_VOLUME_DESCRIPTOR[] VolumeDescriptor; // both are console-signed into the signature above
+        public uint Version;
+        public uint LastUsedIndex;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 2)]
+        public uint[] TitleID;
+
+        public bool IsValid
+        {
+            get
+            {
+                return CacheSignature == kMagicJosh;
+            }
+        }
+
+        public void EndianSwap()
+        {
+            CacheSignature = CacheSignature.EndianSwap();
+            Signature.EndianSwap();
+            for (int i = 0; i < 2; i++)
+                VolumeDescriptor[i].EndianSwap();
+            Version = Version.EndianSwap();
+            LastUsedIndex = LastUsedIndex.EndianSwap();
+            for (int i = 0; i < 2; i++)
+                TitleID[i] = TitleID[i].EndianSwap();
         }
     }
 }

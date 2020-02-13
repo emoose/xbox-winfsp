@@ -11,15 +11,24 @@ namespace XboxWinFsp
     public class StfsFileSystem : ReadOnlyFileSystem
     {
         public const int kSectorSize = 0x1000;
+        public static readonly char[] kInvalidFilenameChars = new[] { '>', '<', '=', '?', ':', ';', '"', '*', '+', ',', '/', '\\', '|' };
         static readonly int[] kDataBlocksPerHashLevel = new int[] { 0xAA, 0x70E4, 0x4AF768 };
 
         public bool SkipHashChecks = false;
 
+        // If this is a cache partition, the cache header can be set here
+        // This'll allow the metadata.ini to present the info from it
+        public CACHE_PARTITION_DATA CacheHeader;
+        public int CachePartitionIndex = -1;
+
+        public STF_VOLUME_DESCRIPTOR StfsVolumeDescriptor;
+
+        // Position of start of this FS
+        long Position = 0;
+
         XCONTENT_HEADER Header;
         XCONTENT_METADATA Metadata;
         XCONTENT_METADATA_INSTALLER InstallerMetadata;
-
-        STF_VOLUME_DESCRIPTOR StfsVolumeDescriptor;
 
         PEC_HEADER PecHeader;
         bool IsXContent = false;
@@ -44,24 +53,29 @@ namespace XboxWinFsp
 
         // Misc
         SHA1 Sha1 = SHA1.Create();
-        object StreamLock = new object();
 
-        public StfsFileSystem(Stream stream, string inputPath) : base(stream, inputPath, kSectorSize)
+        public StfsFileSystem(Stream stream, string inputPath, long partitionOffset = 0) : base(stream, inputPath, kSectorSize)
         {
-        }
-
-        public void SetVolumeDescriptor(STF_VOLUME_DESCRIPTOR descriptor)
-        {
-            StfsVolumeDescriptor = descriptor;
+            Position = partitionOffset;
         }
 
         void StfsInit()
         {
+            if (Position == 0)
+                Position = Stream.Position;
+
+            // Set ConsoleSignature if this is a cache partition, so metadata.ini can reflect it
+            if (CacheHeader.IsValid && CachePartitionIndex != -1)
+            {
+                IsConsoleSigned = true;
+                ConsoleSignature = CacheHeader.Signature;
+            }
+
             // Read in XContent/PEC header if the volume descriptor isn't already set:
             if (StfsVolumeDescriptor.DescriptorLength != 0x24)
             {
                 var fatHeader = Stream.ReadStruct<FAT_VOLUME_METADATA>();
-                Stream.Position -= Marshal.SizeOf(fatHeader.GetType());
+                Stream.Position = Position;
                 if (fatHeader.Signature == FatxFileSystem.kMagicFatx || fatHeader.Signature == FatxFileSystem.kMagicFatxBE)
                 {
                     // STFC partition (uses FATX header for some reason, but has an invalid chainmap)
@@ -311,7 +325,7 @@ namespace XboxWinFsp
                 writer.WriteLine($"ThumbnailSize = 0x{Metadata.ThumbnailSize:X}");
                 writer.WriteLine($"TitleThumbnailSize = 0x{Metadata.TitleThumbnailSize:X}");
 
-                if(InstallerMetadata.IsValid)
+                if (InstallerMetadata.IsValid)
                 {
                     writer.WriteLine();
                     writer.WriteLine("[XContentMetadataInstaller]");
@@ -331,7 +345,17 @@ namespace XboxWinFsp
             }
             else
             {
-                if (PecHeader.ContentId != null)
+                if (CachePartitionIndex != -1 && CacheHeader.IsValid)
+                {
+                    writer.WriteLine("[CachePartitionData]");
+                    writer.WriteLine($"CacheSignature = 0x{CacheHeader.CacheSignature:X}");
+                    writer.WriteLine($"Version = {CacheHeader.Version}");
+                    writer.WriteLine($"LastUsedIndex = {CacheHeader.LastUsedIndex}");
+                    writer.WriteLine($"PartitionIndex = {CachePartitionIndex}");
+                    writer.WriteLine($"TitleID[Partition0] = 0x{CacheHeader.TitleID[0]:X8}");
+                    writer.WriteLine($"TitleID[Partition1] = 0x{CacheHeader.TitleID[1]:X8}");
+                }
+                else if (PecHeader.ContentId != null)
                 {
                     writer.WriteLine("[PECHeader]");
                     writer.WriteLine($"ContentId = {BitConverter.ToString(PecHeader.ContentId)}");
@@ -483,7 +507,7 @@ namespace XboxWinFsp
 
         long StfsBackingBlockToOffset(int BlockNumber)
         {
-            return SizeOfHeaders + (BlockNumber * 0x1000);
+            return Position + SizeOfHeaders + (BlockNumber * 0x1000);
         }
 
         long StfsDataBlockToOffset(int BlockNumber)
@@ -609,7 +633,15 @@ namespace XboxWinFsp
                 Host.PersistentAcls = false;
                 Host.PassQueryDirectoryPattern = true;
                 Host.FlushAndPurgeOnCleanup = true;
-                Host.VolumeCreationTime = (ulong)CreationTime.ToFileTimeUtc();
+                try
+                {
+                    Host.VolumeCreationTime = (ulong)CreationTime.ToFileTimeUtc();
+                }
+                catch
+                {
+                    Host.VolumeCreationTime = 0;
+                }
+
                 if (IsXContent)
                 {
                     Host.VolumeSerialNumber = BitConverter.ToUInt32(Header.ContentId, 0);
@@ -648,7 +680,6 @@ namespace XboxWinFsp
             StfsFileSystem FileSystem;
             public STF_DIRECTORY_ENTRY DirEntry;
 
-            public long DirEntryAddr;
             internal int[] BlockChain; // Chain gets read in once a FileDesc is created for the entry
             public Stream FakeData; // Allows us to inject custom data into the filesystem, eg. for a fake metadata.ini file.
 
@@ -722,7 +753,6 @@ namespace XboxWinFsp
 
             public bool Read(Stream stream)
             {
-                DirEntryAddr = stream.Position;
                 DirEntry = stream.ReadStruct<STF_DIRECTORY_ENTRY>();
                 DirEntry.EndianSwap();
                 return DirEntry.IsValid;

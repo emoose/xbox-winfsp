@@ -1,11 +1,12 @@
 ﻿using System;
 using System.IO;
+using System.Reflection;
 using System.Collections.Generic;
+using System.Security.AccessControl;
 
 using Fsp;
 using VolumeInfo = Fsp.Interop.VolumeInfo;
 using FileInfo = Fsp.Interop.FileInfo;
-using System.Reflection;
 
 namespace XboxWinFsp
 {
@@ -19,6 +20,8 @@ namespace XboxWinFsp
         public ulong BytesFree;
         public ulong BytesInUse;
         public string VolumeLabel;
+
+        public Object StreamLock = new object();
 
         public ReadOnlyFileSystem(Stream stream, string inputPath, int sectorSize)
         {
@@ -132,7 +135,7 @@ namespace XboxWinFsp
             {
                 FileInfo = default;
                 FileDesc0 = null;
-                return STATUS_NO_SUCH_FILE;
+                return STATUS_OBJECT_NAME_NOT_FOUND;
             }
 
             var fileDesc2 = new FileInstance(foundEntry, this);
@@ -222,8 +225,16 @@ namespace XboxWinFsp
                 if (entry != null)
                     FileAttributes1 = entry.IsDirectory ? (uint)FileAttributes.Directory : 0;
                 else
-                    return STATUS_NO_SUCH_FILE;
+                    return STATUS_OBJECT_NAME_NOT_FOUND;
             }
+
+            /*var RootSddl = "D:P(A;;RPWPLC;;;WD)";
+            var RootSecurityDescriptor = new RawSecurityDescriptor(RootSddl);
+            var securityDesc = new byte[RootSecurityDescriptor.BinaryLength];
+            RootSecurityDescriptor.GetBinaryForm(securityDesc, 0);*/
+
+            //SecurityDescriptor = securityDesc;
+
             return STATUS_SUCCESS;
         }
 
@@ -241,7 +252,7 @@ namespace XboxWinFsp
             VolumeInfo = default;
             VolumeInfo.FreeSize = BytesFree;
             VolumeInfo.TotalSize = BytesInUse + BytesFree;
-            VolumeInfo.SetVolumeLabel(VolumeLabel);
+            VolumeInfo.SetVolumeLabel(VolumeLabel.Trim(new char[] { '\0', (char)0xff }));
 
             return STATUS_SUCCESS;
         }
