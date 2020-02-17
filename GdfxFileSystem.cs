@@ -22,8 +22,6 @@ namespace XboxWinFsp
         ulong HeaderAddress = 0;
         ulong BaseAddress = 0;
 
-        object StreamLock = new object();
-
         public GdfxFileSystem(Stream stream, string inputPath) : base(stream, inputPath, kSectorSize)
         {
         }

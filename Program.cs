@@ -255,7 +255,7 @@ namespace XboxWinFsp
                                 var device = new FatxDevice(i);
                                 if (!device.IsFatxDevice())
                                     continue;
-                                var partitions = device.LoadPartitions();
+                                var partitions = device.LoadPartitions(DebugFlags);
                                 if (partitions.Count > 0)
                                     connectedDrives += $"{i} ";
 

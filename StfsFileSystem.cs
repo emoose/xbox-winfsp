@@ -6,6 +6,8 @@ using System.Runtime.InteropServices;
 
 using Fsp;
 
+// TODO:
+// - add invalid tables to metadata.ini
 namespace XboxWinFsp
 {
     public class StfsFileSystem : ReadOnlyFileSystem

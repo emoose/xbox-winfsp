@@ -6,13 +6,23 @@ using System.Runtime.InteropServices;
 
 using Fsp;
 
+// TODO:
+// - more invalid/deleted checks
+// - better error handling
+// - metadata.ini informing about deleted files/errors?
 namespace XboxWinFsp
 {
     public class FatxFileSystem : ReadOnlyFileSystem
     {
         public const int kSectorSize = 0x200;
+
         public const uint kMagicFatx = 0x58544146;
         public const uint kMagicFatxBE = 0x46415458;
+
+        public const uint kMaxDirectoryEntries = 4096; // max num of entries per directory
+        public const uint kMaxDirectorySize = kMaxDirectoryEntries * 0x40; // 0x40 = sizeof(FAT_DIRECTORY_ENTRY)
+        public const int kMaxFilenameLength = 42;
+        public const ushort kMaxPathLength = 240;
 
         public const uint kClusterFree = 0;
         public const uint kClusterReserved = 0xfffffff0;
@@ -150,7 +160,10 @@ namespace XboxWinFsp
         {
             var entries = new List<IFileEntry>();
 
-            var directoryChain = FatxGetClusterChain(directoryCluster);
+            // Work out a maximum number of clusters to read, in case volume has some kind of corruption
+            int maxClusterCount = (int)(Utility.RoundToPages(kMaxDirectorySize, ClusterSize) + 1);
+
+            var directoryChain = FatxGetClusterChain(directoryCluster, maxClusterCount);
             long addrStart = FatxClusterToAddress(directoryCluster);
             for (int i = 0; i < directoryChain.Length; i++)
             {
@@ -174,7 +187,7 @@ namespace XboxWinFsp
                         entries.Add(entry);
                 }
 
-                if (noMoreEntries)
+                if (noMoreEntries || entries.Count >= kMaxDirectoryEntries)
                     break;
             }
 
@@ -199,10 +212,10 @@ namespace XboxWinFsp
             return entries;
         }
 
-        uint[] FatxGetClusterChain(uint cluster)
+        uint[] FatxGetClusterChain(uint cluster, int limit = int.MaxValue)
         {
             var chain = new List<uint>();
-            while (cluster != 0xFFFFFFFF)
+            while (cluster != 0xFFFFFFFF && limit > chain.Count)
             {
                 chain.Add(cluster);
                 cluster = ChainMap[cluster];
@@ -227,7 +240,7 @@ namespace XboxWinFsp
                 var Host = (FileSystemHost)Host0;
                 Host.SectorSize = kSectorSize;
                 Host.SectorsPerAllocationUnit = (ushort)FatHeader.SectorsPerCluster;
-                Host.MaxComponentLength = 255;
+                Host.MaxComponentLength = kMaxPathLength;
                 Host.FileInfoTimeout = 1000;
                 Host.CaseSensitiveSearch = false;
                 Host.CasePreservedNames = true;
@@ -428,7 +441,7 @@ namespace XboxWinFsp
         {
             get
             {
-                return Encoding.Unicode.GetString(VolumeNameBytes).Trim(new char[] { '\0' });
+                return Encoding.Unicode.GetString(VolumeNameBytes).Trim(new char[] { '\0', (char)0xff, (char)0xffff });
             }
         }
 
@@ -483,7 +496,7 @@ namespace XboxWinFsp
             {
                 if (IsDeleted)
                     return true;
-                return FileNameLength > 0 && FileNameLength <= 42;
+                return FileNameLength > 0 && FileNameLength <= FatxFileSystem.kMaxFilenameLength;
             }
         }
 
@@ -491,7 +504,21 @@ namespace XboxWinFsp
         {
             get
             {
-                return IsValidFileNameLength && FirstCluster > 0; // TODO: more checks?
+                try
+                {
+                    if (!IsValidFileNameLength || FirstCluster <= 0)
+                        return false;
+                    // ToFileTimeUtc will throw exception if time is invalid
+                    // Just hope these don't get optimized out..
+                    bool test1 = CreationTime.ToFileTimeUtc() == CreationTime.ToFileTimeUtc();
+                    bool test2 = LastWriteTime.ToFileTimeUtc() == LastWriteTime.ToFileTimeUtc();
+                    bool test3 = LastAccessTime.ToFileTimeUtc() == LastAccessTime.ToFileTimeUtc();
+                    return test1 && test2 && test3; // TODO: more checks?
+                }
+                catch
+                {
+                    return false;
+                }
             }
         }
 
@@ -531,15 +558,20 @@ namespace XboxWinFsp
         {
             get
             {
-                if (IsDeleted) // TODO: maybe we should hide deleted files?
+                if (IsDeleted)
                     return "_" + Encoding.ASCII.GetString(FileNameBytes).Trim(new char[] { '\0', (char)0xff });
                 else
                     return Encoding.ASCII.GetString(FileNameBytes, 0, FileNameLength).Trim(new char[] { '\0', (char)0xff });
             }
             set
             {
-                FileNameLength = (byte)value.Length;
+                if(!IsDeleted)
+                    FileNameLength = (byte)value.Length;
+
                 FileNameBytes = Encoding.ASCII.GetBytes(value);
+
+                if (FileNameBytes.Length > FatxFileSystem.kMaxFilenameLength)
+                    Array.Resize(ref FileNameBytes, FatxFileSystem.kMaxFilenameLength);
             }
         }
 
