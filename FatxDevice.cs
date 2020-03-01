@@ -25,14 +25,12 @@ namespace XboxWinFsp
             { "Data", 0x7FF000, 0 },
 
             // Xbox OG HDD
-            // (commented for now, until I can confirm that it works...)
-            /*
             { "Data", 0xABE80000, 0x1312D6000 },
             { "System", 0x8CA80000, 0x1F400000 },
             { "Cache X", 0x80000, 0x2EE00000 },
             { "Cache Y", 0x2EE80000, 0x2EE00000 },
             { "Cache Z", 0x5DC80000, 0x2EE00000 },
-            { "UserDefined", 0x1DD156000, 0 },*/
+            { "UserDefined", 0x1DD156000, 0 },
 
             // X360 USB "XTAF" image - from github.com/landaire/Up
             // Needs verification...
