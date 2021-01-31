@@ -14,8 +14,9 @@ namespace XboxWinFsp
         const int kSectorSize = 0x800;
 
         const int kXgd2HeaderAddress = 0x10000; // Address of XGD1/XGD2 header (depends on Version field value)
-        const int kXgd25HeaderAddress = 0xFDA0000; // Address of XGD2.5 header?
-        const int kXgd3HeaderAddress = 0x2090000; // Address of XGD3 header?
+        const int kXgd25HeaderAddress = 0xFD90000 + 0x10000; // Address of XGD2.5 header?
+        const int kXgd3HeaderAddress = 0x2080000 + 0x10000; // Address of XGD3 header?
+        const int kXgd1HeaderAddress = 0x18300000 + 0x10000; // Address of XGD1 (OG xbox) header
 
         GDF_VOLUME_DESCRIPTOR GdfHeader;
 
@@ -29,16 +30,19 @@ namespace XboxWinFsp
         void GdfxInit()
         {
             // First try reading GDF header from some standard addresses:
-            int[] standardAddresses = new int[] { kXgd2HeaderAddress, kXgd25HeaderAddress, kXgd3HeaderAddress };
+            int[] standardAddresses = new int[] { kXgd2HeaderAddress, kXgd25HeaderAddress, kXgd3HeaderAddress, kXgd1HeaderAddress };
             long headerAddress = -1;
             foreach (var addr in standardAddresses)
             {
-                Stream.Position = addr;
-                GdfHeader = Stream.ReadStruct<GDF_VOLUME_DESCRIPTOR>();
-                if (GdfHeader.IsValid)
+                if (Stream.Length > addr)
                 {
-                    headerAddress = addr;
-                    break;
+                    Stream.Position = addr;
+                    GdfHeader = Stream.ReadStruct<GDF_VOLUME_DESCRIPTOR>();
+                    if (GdfHeader.IsValid)
+                    {
+                        headerAddress = addr;
+                        break;
+                    }
                 }
             }
 
@@ -72,7 +76,7 @@ namespace XboxWinFsp
         }
 
         // Reads GDFX directory entries into a list
-        List<IFileEntry> GdfReadDirectory(ulong sectorNum, ulong dirSize, FileEntry parent)
+        List<IFileEntry> GdfReadDirectory(ulong sectorNum, long dirSize, FileEntry parent)
         {
             long curPos = Stream.Position;
             var entries = new List<IFileEntry>();
@@ -102,7 +106,7 @@ namespace XboxWinFsp
                     break;
 
                 if (entry.IsDirectory)
-                    entry.Children = GdfReadDirectory(entry.DirEntry.FirstSector, entry.Size, entry);
+                    entry.Children = GdfReadDirectory(entry.DirEntry.FirstSector, (long)entry.Size, entry);
                 else
                     BytesInUse += entry.DirEntry.FileSize;
 
