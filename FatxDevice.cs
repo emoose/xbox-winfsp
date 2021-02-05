@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Text;
 using System.Linq;
@@ -157,12 +157,14 @@ namespace XboxWinFsp
 
         public bool IsOGXboxDevice()
         {
-            if (DriveSize < (0x600 + Marshal.SizeOf(typeof(FATX_DEVICE_MAGIC))))
+            if (DriveSize < (0x600 + 4))
                 return false;
 
+            byte[] bytes = new byte[4];
+
             Stream.Position = 0x600;
-            var Fatx_Magic = Stream.ReadStruct<FATX_DEVICE_MAGIC>();
-            if (Fatx_Magic.Magic == "BRFR")
+            Stream.Read(bytes, 0, 4);
+            if (Encoding.ASCII.GetString(bytes) == "BRFR")
                 return true;
 
             return false;
@@ -170,12 +172,14 @@ namespace XboxWinFsp
 
         public bool IsXbox360Device()
         {
-            if (DriveSize < (0x800 + Marshal.SizeOf(typeof(FATX_DEVICE_MAGIC))))
+            if (DriveSize < (0x800 + 4))
                 return false;
 
+            byte[] bytes = new byte[4];
+
             Stream.Position = 0x800;
-            var Fatx_Magic = Stream.ReadStruct<FATX_DEVICE_MAGIC>();
-            if (Fatx_Magic.Magic == "Josh")
+            Stream.Read(bytes, 0, 4);
+            if (Encoding.ASCII.GetString(bytes) == "Josh")
                 return true;
 
             return false;
@@ -470,22 +474,6 @@ namespace XboxWinFsp
             get
             {
                 return Magic == "****PARTINFO****";
-            }
-        }
-
-    }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
-    public struct FATX_DEVICE_MAGIC
-    {
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)]
-        public byte[] MagicBytes;
-
-        public String Magic
-        {
-            get
-            {
-                return Encoding.ASCII.GetString(MagicBytes).Trim();
             }
         }
 
