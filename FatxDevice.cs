@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using System.Text;
 using System.Linq;
 using System.Collections.Generic;
 using System.Security.AccessControl;
@@ -18,19 +19,22 @@ namespace XboxWinFsp
 
         Object StreamLock = new object();
 
-        static readonly TupleList<string, long, long> kXboxPartitions = new TupleList<string, long, long>
+        static readonly TupleList<string, long, long> kOGXboxPartitions = new TupleList<string, long, long>
         {
-            // X360 MU
-            { "Cache", 0, 0x7FF000 },
-            { "Data", 0x7FF000, 0 },
-
-            // Xbox OG HDD
             { "Data", 0xABE80000, 0x1312D6000 },
             { "System", 0x8CA80000, 0x1F400000 },
             { "Cache X", 0x80000, 0x2EE00000 },
             { "Cache Y", 0x2EE80000, 0x2EE00000 },
             { "Cache Z", 0x5DC80000, 0x2EE00000 },
-            { "UserDefined", 0x1DD156000, 0 },
+            { "User Defined F", 0x1DD156000, 0 },
+            { "User Defined G", 0x1FFFFFFE00, 0 },
+        };
+
+        static readonly TupleList<string, long, long> kXbox360Partitions = new TupleList<string, long, long>
+        {
+            // X360 MU
+            { "Cache", 0, 0x7FF000 },
+            { "Data", 0x7FF000, 0 },
 
             // X360 USB "XTAF" image - from github.com/landaire/Up
             // Needs verification...
@@ -118,11 +122,25 @@ namespace XboxWinFsp
 
         public bool IsFatxDevice()
         {
+
+            if (!IsOGXboxDevice() && !IsXbox360Device())
+                return false;
+
             Stream.Position = 0;
             var devkitTable = Stream.ReadStruct<FATX_DEVKIT_PARTITION_TABLE>();
             devkitTable.EndianSwap();
             if (devkitTable.IsValid)
                 return true;
+
+            Stream.Position = 0;
+            var homebrewTable = Stream.ReadStruct<FATX_HOMEBREW_PARTITION_TABLE>(); // Homebew table is apparently Little Endian (need to confirm with a console-formatted HDD)
+            if (homebrewTable.IsValid)
+                return true;
+
+            var kXboxPartitions = new TupleList<string, long, long>();
+            kXboxPartitions.AddRange(kOGXboxPartitions);
+            kXboxPartitions.AddRange(kXbox360Partitions);
+
             foreach (var partition in kXboxPartitions)
             {
                 if (DriveSize <= partition.Item2)
@@ -137,6 +155,32 @@ namespace XboxWinFsp
             return false;
         }
 
+        public bool IsOGXboxDevice()
+        {
+            if (DriveSize < (0x600 + Marshal.SizeOf(typeof(FATX_DEVICE_MAGIC))))
+                return false;
+
+            Stream.Position = 0x600;
+            var Fatx_Magic = Stream.ReadStruct<FATX_DEVICE_MAGIC>();
+            if (Fatx_Magic.Magic == "BRFR")
+                return true;
+
+            return false;
+        }
+
+        public bool IsXbox360Device()
+        {
+            if (DriveSize < (0x800 + Marshal.SizeOf(typeof(FATX_DEVICE_MAGIC))))
+                return false;
+
+            Stream.Position = 0x800;
+            var Fatx_Magic = Stream.ReadStruct<FATX_DEVICE_MAGIC>();
+            if (Fatx_Magic.Magic == "Josh")
+                return true;
+
+            return false;
+        }
+
         public List<FileSystemHost> LoadPartitions(uint DebugLogLevel = 0)
         {
             if (!IsFatxDevice())
@@ -144,70 +188,112 @@ namespace XboxWinFsp
 
             var filesystems = new List<FileSystemHost>();
 
-            // Filter kXboxPartitions to the ones that could fit onto this drive/image
-            var partitions = kXboxPartitions.Where(partition => partition.Item2 < DriveSize && partition.Item2 + partition.Item3 <= DriveSize).ToList();
+            List<Tuple<String, long, long>> partitions;
 
-            // Try reading in devkit partition table
-            Stream.Position = 0;
-            var devkitTable = Stream.ReadStruct<FATX_DEVKIT_PARTITION_TABLE>();
-            devkitTable.EndianSwap();
-            if (devkitTable.IsValid)
+            if (IsOGXboxDevice())
             {
-                // Add any non-zero partitions to our partition list
-                for(int i = 0; i < devkitTable.Partitions.Length; i++)
-                {
-                    var partition = devkitTable.Partitions[i];
+                // Filter kXboxPartitions to the ones that could fit onto this drive/image
+                partitions = kOGXboxPartitions.Where(partition => partition.Item2 < DriveSize && partition.Item2 + partition.Item3 <= DriveSize).ToList();
 
-                    if(partition.Offset != 0 && partition.Size != 0)
+                // Try reading in homebrew partition table
+                Stream.Position = 0;
+                var homebrewTable = Stream.ReadStruct<FATX_HOMEBREW_PARTITION_TABLE>();
+                if (homebrewTable.IsValid)
+                {
+                    // Add any non-zero partitions to our partition list
+                    for (int i = 0; i < homebrewTable.Partitions.Length; i++)
                     {
-                        var partitionName = kDevkitPartitionNames[i];
-                        if(partitionName == "Dump") // Dump can contain multiple partitions, see kDumpPartitions
-                            foreach (var dumpPartition in kDumpPartitions)
-                                partitions.Add(new Tuple<string, long, long>(
-                                    $"DevKit {dumpPartition.Item1}", partition.Offset + dumpPartition.Item2, dumpPartition.Item3));
-                        else
-                            partitions.Add(new Tuple<string, long, long>(
-                                    $"DevKit {kDevkitPartitionNames[i]}", partition.Offset, partition.Size));
+                        var partition = homebrewTable.Partitions[i];
+                        if (partition.IsValid)
+                        {
+                            var tuple = new Tuple<String, long, long>(partition.Name, partition.Offset, partition.Size);
+                            // Remove any overlapping partition
+                            partitions.RemoveAll(p => (p.Item2 < (tuple.Item2 + tuple.Item3) && tuple.Item2 < (p.Item2 + p.Item3)));
+                            partitions.RemoveAll(p => (p.Item2 == tuple.Item2 && p.Item3 == 0));
+                            partitions.Add(tuple);
+                        }
                     }
                 }
+
             }
-
-            // Read in cache partition data
-            Stream.Position = 0x800;
-            CacheHeader = Stream.ReadStruct<CACHE_PARTITION_DATA>();
-            CacheHeader.EndianSwap();
-
-            // Check partition validity & remove any invalid ones
-            var removeList = new List<int>();
-            for(int i = 0; i < partitions.Count; i++)
+            else if (IsXbox360Device())
             {
-                Stream.Seek(partitions[i].Item2, SeekOrigin.Begin);
-                var header = Stream.ReadStruct<FAT_VOLUME_METADATA>();
-                if (!header.IsValid)
-                    removeList.Add(i);
+                // Filter kXboxPartitions to the ones that could fit onto this drive/image
+                partitions = kXbox360Partitions.Where(partition => partition.Item2 < DriveSize && partition.Item2 + partition.Item3 <= DriveSize).ToList();
+
+                // Try reading in devkit partition table
+                Stream.Position = 0;
+                var devkitTable = Stream.ReadStruct<FATX_DEVKIT_PARTITION_TABLE>();
+                devkitTable.EndianSwap();
+                if (devkitTable.IsValid)
+                {
+                    // Add any non-zero partitions to our partition list
+                    for (int i = 0; i < devkitTable.Partitions.Length; i++)
+                    {
+                        var partition = devkitTable.Partitions[i];
+
+                        if (partition.Offset != 0 && partition.Size != 0)
+                        {
+                            var partitionName = kDevkitPartitionNames[i];
+                            if (partitionName == "Dump")
+                            { // Dump can contain multiple partitions, see kDumpPartitions
+                                foreach (var dumpPartition in kDumpPartitions)
+                                {
+                                    partitions.Add(new Tuple<string, long, long>(
+                                        $"DevKit {dumpPartition.Item1}", partition.Offset + dumpPartition.Item2, dumpPartition.Item3));
+                                }
+                            }
+                            else
+                            {
+                                partitions.Add(new Tuple<string, long, long>(
+                                    $"DevKit {kDevkitPartitionNames[i]}", partition.Offset, partition.Size));
+                            }
+                        }
+                    }
+                }
+
+                // Read in cache partition data
+                Stream.Position = 0x800;
+                CacheHeader = Stream.ReadStruct<CACHE_PARTITION_DATA>();
+                CacheHeader.EndianSwap();
+
+                // Check partition validity & remove any invalid ones
+                var removeList = new List<int>();
+                for (int i = 0; i < partitions.Count; i++)
+                {
+                    Stream.Seek(partitions[i].Item2, SeekOrigin.Begin);
+                    var header = Stream.ReadStruct<FAT_VOLUME_METADATA>();
+                    if (!header.IsValid)
+                        removeList.Add(i);
+                }
+                removeList.Reverse();
+                foreach (var index in removeList)
+                    partitions.RemoveAt(index);
+
+                // Work out the retail data partition size
+                // (We check all partitions for size == 0 here, because devkit partitions could be added after)
+                // (Even though any retail data partition would be invalid/corrupt by devkit partition presence, it's worth trying to salvage it)
+                for (int i = 0; i < partitions.Count; i++)
+                {
+                    var partition = partitions[i];
+                    long size = 0x377FFC000; // 20GB HDD
+                    if (DriveSize != 0x04AB440C00)  // 20GB HDD
+                        size = DriveSize - partition.Item2;
+
+                    if (partition.Item3 == 0)
+                        partitions[i] = new Tuple<string, long, long>(partition.Item1, partition.Item2, size);
+                }
+
+                // TODO: check if any partitions interfere with each other (eg. devkit Partition1 located inside retail Partition1 space), and mark the drive label if so ("CORRUPT" or something similar)
+
             }
-            removeList.Reverse();
-            foreach(var index in removeList)
-                partitions.RemoveAt(index);
+            else
+            {
+                return null;
+            }
 
             // Sort partitions by their offset
-            partitions.OrderBy(p => p.Item2).ToList();
-
-            // Work out the retail data partition size
-            // (We check all partitions for size == 0 here, because devkit partitions could be added after)
-            // (Even though any retail data partition would be invalid/corrupt by devkit partition presence, it's worth trying to salvage it)
-            for (int i = 0; i < partitions.Count; i++)
-            {
-                var partition = partitions[i];
-                long size = 0x377FFC000; // 20GB HDD
-                if (DriveSize != 0x04AB440C00)  // 20GB HDD
-                    size = DriveSize - partition.Item2;
-
-                if (partition.Item3 == 0)
-                    partitions[i] = new Tuple<string, long, long>(partition.Item1, partition.Item2, size);
-            }
-
-            // TODO: check if any partitions interfere with each other (eg. devkit Partition1 located inside retail Partition1 space), and mark the drive label if so ("CORRUPT" or something similar)
+            partitions = partitions.OrderBy(p => p.Item2).ToList();
 
             // Load in the filesystems & mount them:
             int stfcIndex = 0;
@@ -314,4 +400,95 @@ namespace XboxWinFsp
                 Partitions[i].EndianSwap();
         }
     }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    public struct FATX_HOMEBREW_PARTITION_ENTRY
+    {
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+        public byte[] NameBytes;
+        public uint Flags;
+        public uint LBAStart;
+        public uint LBASize;
+        public uint Reserved;   // Usually all zeroes
+
+        public String Name
+        {
+            get
+            {
+                return Encoding.ASCII.GetString(NameBytes).Trim();
+            }
+        }
+
+        public long Offset
+        {
+            get
+            {
+                return (long)LBAStart * FatxFileSystem.kSectorSize;
+            }
+        }
+
+        public long Size
+        {
+            get
+            {
+                return (long)LBASize * FatxFileSystem.kSectorSize;
+            }
+        }
+
+        public bool IsValid
+        {
+            get
+            {
+                // 0x400 is the address of the first partition
+                // 0x80000000 is a flag indicating that the partition is in use
+                return (LBAStart >= 0x400) && (LBASize > 0) && ((Flags & 0x80000000) != 0);
+            }
+        }
+
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    public struct FATX_HOMEBREW_PARTITION_TABLE // As defined by XBP Table Writer
+    {
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+        public byte[] MagicBytes;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+        public byte[] Res0; // Reserved bytes, always 0
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 14)]
+        public FATX_HOMEBREW_PARTITION_ENTRY[] Partitions;
+
+        public String Magic
+        {
+            get
+            {
+                return Encoding.ASCII.GetString(MagicBytes).Trim();
+            }
+        }
+
+        public bool IsValid
+        {
+            get
+            {
+                return Magic == "****PARTINFO****";
+            }
+        }
+
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    public struct FATX_DEVICE_MAGIC
+    {
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)]
+        public byte[] MagicBytes;
+
+        public String Magic
+        {
+            get
+            {
+                return Encoding.ASCII.GetString(MagicBytes).Trim();
+            }
+        }
+
+    }
+
 }
