@@ -256,48 +256,44 @@ namespace XboxWinFsp
                     }
                 }
 
-                // Read in cache partition data
-                Stream.Position = 0x800;
-                CacheHeader = Stream.ReadStruct<CACHE_PARTITION_DATA>();
-                CacheHeader.EndianSwap();
-
-                // Check partition validity & remove any invalid ones
-                var removeList = new List<int>();
-                for (int i = 0; i < partitions.Count; i++)
-                {
-                    Stream.Seek(partitions[i].Item2, SeekOrigin.Begin);
-                    var header = Stream.ReadStruct<FAT_VOLUME_METADATA>();
-                    if (!header.IsValid)
-                        removeList.Add(i);
-                }
-                removeList.Reverse();
-                foreach (var index in removeList)
-                    partitions.RemoveAt(index);
-
-                // Work out the retail data partition size
-                // (We check all partitions for size == 0 here, because devkit partitions could be added after)
-                // (Even though any retail data partition would be invalid/corrupt by devkit partition presence, it's worth trying to salvage it)
-                for (int i = 0; i < partitions.Count; i++)
-                {
-                    var partition = partitions[i];
-                    long size = 0x377FFC000; // 20GB HDD
-                    if (DriveSize != 0x04AB440C00)  // 20GB HDD
-                        size = DriveSize - partition.Item2;
-
-                    if (partition.Item3 == 0)
-                        partitions[i] = new Tuple<string, long, long>(partition.Item1, partition.Item2, size);
-                }
-
-                // TODO: check if any partitions interfere with each other (eg. devkit Partition1 located inside retail Partition1 space), and mark the drive label if so ("CORRUPT" or something similar)
-
             }
             else
             {
                 return null;
             }
 
+            // Read in cache partition data
+            Stream.Position = 0x800;
+            CacheHeader = Stream.ReadStruct<CACHE_PARTITION_DATA>();
+            CacheHeader.EndianSwap();
+
             // Sort partitions by their offset
-            partitions = partitions.OrderBy(p => p.Item2).ToList();
+            partitions = partitions.OrderBy(p => p.Item2).ThenBy(p => p.Item3).ToList();
+
+            for (int i = partitions.Count - 1; i >= 0; i--) // Iterate backward, to remove invalid partitions and detect overlaps
+            {
+                Stream.Seek(partitions[i].Item2, SeekOrigin.Begin);
+                var header = Stream.ReadStruct<FAT_VOLUME_METADATA>();
+                if (!header.IsValid)
+                {
+                    partitions.RemoveAt(i);
+                } else if (partitions[i].Item3 == 0)    // Partition was found but we have to guess the size
+                {
+                    long size = 0x377FFC000; // 20GB HDD
+                    if (DriveSize != 0x04AB440C00)  // 20GB HDD
+                        size = DriveSize - partitions[i].Item2;
+
+                    for (int j = partitions.Count - 1; j > i; j--)
+                    {
+                        size = Math.Min(size, partitions[j].Item2 - partitions[i].Item2);   // Stop at any partition found after it
+                        // Please note that if the drive was previously formatted with a G partition and the FATX header was not overwritten, the F partition will be truncated
+                    }
+                    partitions[i] = new Tuple<string, long, long>(partitions[i].Item1, partitions[i].Item2, size);
+                }
+                    
+            }
+
+            // TODO: check if any partitions interfere with each other (eg. devkit Partition1 located inside retail Partition1 space), and mark the drive label if so ("CORRUPT" or something similar)
 
             // Load in the filesystems & mount them:
             int stfcIndex = 0;

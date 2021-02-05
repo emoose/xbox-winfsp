@@ -217,7 +217,7 @@ namespace XboxWinFsp
             while (cluster != kClusterLast && cluster != kClusterMedia && cluster != kClusterBad && limit > chain.Count)
             {
                 chain.Add(cluster);
-                cluster = ChainMap[cluster - 1];
+                cluster = ChainMap[cluster];
             }
             return chain.ToArray();
         }

@@ -102,6 +102,8 @@ namespace XboxWinFsp
                     // Otherwise we'll try searching the children of the current entry instead...
                     if (i + 1 == filePath.Length)
                         foundEntry = entry;
+                    else if (entry.Children == null)
+                        break;
                     else
                         searchList = entry.Children;
                 }
