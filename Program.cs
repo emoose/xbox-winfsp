@@ -24,7 +24,8 @@ using System.IO;
 using Microsoft.Win32;
 
 using Fsp;
-using System.Security.AccessControl;
+using System.Security;
+using System.Security.Permissions;
 using System.Collections.Generic;
 
 namespace XboxWinFsp
@@ -50,6 +51,98 @@ namespace XboxWinFsp
         {
         }
 
+        protected void RemoveFS()
+        {
+            try
+            {
+                Console.WriteLine("\r\nRemoving any Xbox filesystems...\r\n");
+
+                RegistryKey key;
+
+                try
+                {
+                    key = Registry.LocalMachine.OpenSubKey(@"Software\WinFsp\Services", true);
+                    if (key != null)
+                        key.DeleteSubKeyTree("xbox-winfsp", false);
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Nothing
+                }
+
+                try
+                {
+                    key = Registry.LocalMachine.OpenSubKey(@"Software\Classes\*\shell", true);
+                    if (key != null)
+                    {
+                        key.DeleteSubKeyTree("Mount as Xbox STFS/GDF", false); // Old key, before changes
+                    }
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Nothing
+                }
+
+                try
+                {
+                    key = Registry.LocalMachine.OpenSubKey(@"Software\Classes\*\shell", true);
+                    if (key != null)
+                    {
+                        key.DeleteSubKeyTree("Mount with XBOX-WINFSP", false);
+                    }
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Nothing
+                }
+
+                Console.WriteLine("Removed Xbox filesystems successfully.\r\n");
+            }
+            catch (Exception ex)
+            {
+                if(ex is SecurityException || ex is UnauthorizedAccessException)
+                {
+                    Console.WriteLine("An error was encountered, maybe try running as admin?\r\n");
+                } else
+                {
+                    throw;
+                }
+            }
+
+        }
+
+        protected void SetupFS()
+        {
+            RemoveFS();
+
+            try
+            {
+
+                Console.WriteLine("\r\nSetting up Xbox filesystems...\r\n");
+                // Add to WinFsp services list, allows using "net use X: \\xbox-winfps\C$\game.iso"
+                Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\WinFsp\Services\xbox-winfsp", "CommandLine", "-u %1 -m %2", RegistryValueKind.String);
+                Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\WinFsp\Services\xbox-winfsp", "Executable", System.Reflection.Assembly.GetEntryAssembly().Location, RegistryValueKind.String);
+                Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\WinFsp\Services\xbox-winfsp", "Security", "D:P(A;;RPWPLC;;;WD)", RegistryValueKind.String);
+                Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\WinFsp\Services\xbox-winfsp", "JobControl", 1, RegistryValueKind.DWord);
+
+                // Context menu item for all files (since STFS has no extension...)
+                Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\Classes\*\shell\Mount with XBOX-WINFSP\command", null, $"\"{System.Reflection.Assembly.GetEntryAssembly().Location}\" -i \"%1\" -m *");
+
+                Console.WriteLine("Successfully setup filesystems, you may need to restart for changes to take effect.\r\n");
+            }
+            catch (Exception ex)
+            {
+                if (ex is SecurityException || ex is UnauthorizedAccessException)
+                {
+                    Console.WriteLine("Error: Failed to setup filesystems, maybe try running as admin?\r\n");
+                }
+                else
+                {
+                    throw;
+                }
+            }
+        }
+
         protected override void OnStart(String[] Args)
         {
             try
@@ -66,6 +159,7 @@ namespace XboxWinFsp
                 GdfxFileSystem Gdfx = null;
                 StfsFileSystem Stfs = null;
                 FatxFileSystem Fatx = null;
+                VirtualFileSystem Vfs = null;
 
                 int I;
 
@@ -109,66 +203,13 @@ namespace XboxWinFsp
 
                 if (SetupFS)
                 {
-                    try
-                    {
-                        Console.WriteLine("\r\nSetting up Xbox filesystems...\r\n");
-                        // Add to WinFsp services list, allows using "net use X: \\xbox-winfps\C$\game.iso"
-                        Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\WinFsp\Services\xbox-winfsp", "CommandLine", "-u %1 -m %2", RegistryValueKind.String);
-                        Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\WinFsp\Services\xbox-winfsp", "Executable", System.Reflection.Assembly.GetEntryAssembly().Location, RegistryValueKind.String);
-                        Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\WinFsp\Services\xbox-winfsp", "Security", "D:P(A;;RPWPLC;;;WD)", RegistryValueKind.String);
-                        Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\WinFsp\Services\xbox-winfsp", "JobControl", 1, RegistryValueKind.DWord);
-
-                        // Context menu item for all files (since STFS has no extension...)
-                        Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\Classes\*\shell\Mount as Xbox STFS/GDF\command", null, $"\"{System.Reflection.Assembly.GetEntryAssembly().Location}\" -i \"%1\" -m *");
-
-                        Console.WriteLine("Successfully setup filesystems, you may need to restart for changes to take effect.\r\n");
-                    }
-                    catch
-                    {
-                        Console.WriteLine("Error: Failed to setup filesystems, maybe try running as admin?\r\n");
-                    }
+                    this.SetupFS();
+                    throw new CommandLineUsageException();
                 }
                 if (RemoveFS)
                 {
-                    try
-                    {
-                        bool error = false;
-                        Console.WriteLine("\r\nRemoving any Xbox filesystems...\r\n");
-                        try
-                        {
-                            RegistryKey key = Registry.LocalMachine.OpenSubKey(@"Software\WinFsp\Services", true);
-                            if (key != null)
-                                key.DeleteSubKeyTree("xbox-winfsp", true);
-                        }
-                        catch
-                        {
-                            Console.WriteLine("Error: Failed to remove xbox-winfsp key!\r\n");
-                            error = true;
-                        }
-
-                        try
-                        {
-                            RegistryKey key = Registry.LocalMachine.OpenSubKey(@"Software\Classes\*\shell", true);
-                            if (key != null)
-                            {
-                                key.DeleteSubKeyTree("Mount as Xbox STFS/GDF");
-                            }
-                        }
-                        catch
-                        {
-                            Console.WriteLine("Error: Failed to remove context-menu key!\r\n");
-                            error = true;
-                        }
-
-                        if (error)
-                            throw new Exception();
-
-                        Console.WriteLine("Removed Xbox filesystems successfully.\r\n");
-                    }
-                    catch
-                    {
-                        Console.WriteLine("An error was encountered, maybe try running as admin?\r\n");
-                    }
+                    this.RemoveFS();
+                    throw new CommandLineUsageException();
                 }
 
                 if (null == ImagePath && null != VolumePrefix)
@@ -177,15 +218,12 @@ namespace XboxWinFsp
                     if (-1 != I && VolumePrefix.Length > I && '\\' != VolumePrefix[I + 1])
                     {
                         I = VolumePrefix.IndexOf('\\', I + 1);
-                        if (-1 != I &&
-                            VolumePrefix.Length > I + 1 &&
-                            (
-                            ('A' <= VolumePrefix[I + 1] && VolumePrefix[I + 1] <= 'Z') ||
-                            ('a' <= VolumePrefix[I + 1] && VolumePrefix[I + 1] <= 'z')
-                            ) &&
-                            '$' == VolumePrefix[I + 2])
+                        VolumePrefix = VolumePrefix.Substring(I);
+                        if(VolumePrefix.StartsWith(@"\PhysicalDrive", StringComparison.InvariantCultureIgnoreCase))
                         {
-                            ImagePath = String.Format("{0}:{1}", VolumePrefix[I + 1], VolumePrefix.Substring(I + 3));
+                            // Format has to be \\.\\PHYSICALDRIVE{0-N}
+                            ImagePath = String.Format(@"\\.\{0}", VolumePrefix);
+                            VolumePrefix = null;
                         }
                     }
                 }
@@ -204,24 +242,44 @@ namespace XboxWinFsp
                         openExplorer = true; // Open mounted drive in explorer if the mountPoint is wildcard - QoL :)
                     }
 
-                    var fileStream = File.OpenRead(ImagePath);
+                    ImagePath = Path.GetFullPath(ImagePath);
+                    if (ImagePath.EndsWith(@"\"))
+                        ImagePath = ImagePath.Substring(0, ImagePath.Length - 1);
 
-                    Host = new FileSystemHost(Fatx = new FatxFileSystem(fileStream, ImagePath));
+                    Stream stream;
+
+                    if (ImagePath.StartsWith(@"\\"))
+                    {
+                        stream = new DeviceStream(ImagePath);
+                    } else
+                    {
+                        var fileStream = File.OpenRead(ImagePath);
+                        stream = new AlignedStream(fileStream, 0x200 * 0x200);
+                    }
+
+                    Host = new FileSystemHost(Vfs = new VirtualFileSystem(stream, ImagePath));
                     Host.Prefix = VolumePrefix;
                     if (Host.Mount(MountPoint, null, true, DebugFlags) < 0)
                     {
-                        Fatx = null;
-                        fileStream.Position = 0;
-                        Host = new FileSystemHost(Stfs = new StfsFileSystem(fileStream, ImagePath));
+                        Vfs = null;
+                        stream.Position = 0;
+                        Host = new FileSystemHost(Fatx = new FatxFileSystem(stream, ImagePath));
                         Host.Prefix = VolumePrefix;
                         if (Host.Mount(MountPoint, null, true, DebugFlags) < 0)
                         {
-                            Stfs = null;
-                            fileStream.Position = 0;
-                            Host = new FileSystemHost(Gdfx = new GdfxFileSystem(fileStream, ImagePath));
+                            Fatx = null;
+                            stream.Position = 0;
+                            Host = new FileSystemHost(Stfs = new StfsFileSystem(stream, ImagePath));
                             Host.Prefix = VolumePrefix;
                             if (Host.Mount(MountPoint, null, true, DebugFlags) < 0)
-                                throw new IOException("cannot mount file system");
+                            {
+                                Stfs = null;
+                                stream.Position = 0;
+                                Host = new FileSystemHost(Gdfx = new GdfxFileSystem(stream, ImagePath));
+                                Host.Prefix = VolumePrefix;
+                                if (Host.Mount(MountPoint, null, true, DebugFlags) < 0)
+                                    throw new IOException("Cannot mount file system.");
+                            }
                         }
                     }
 
@@ -241,9 +299,10 @@ namespace XboxWinFsp
                     Console.Title = $"{MountPoint} - xbox-winfsp";
                     Console.WriteLine($"\r\n{ImagePath}:\r\n Mounted to {MountPoint}, hit CTRL+C in this window to unmount.\r\n");
                 }
-                else
+                else if(VolumePrefix == null && ImagePath == null)
                 {
                     _Hosts = new List<FileSystemHost>();
+                    int _HostsCount = 0;
                     string connectedDrives = "";
                     if (Utility.IsAdministrator())
                     {
@@ -252,25 +311,33 @@ namespace XboxWinFsp
                         {
                             try
                             {
-                                var device = new FatxDevice(i);
-                                if (!device.IsFatxDevice())
-                                    continue;
-                                var partitions = device.LoadPartitions(DebugFlags);
-                                if (partitions.Count > 0)
-                                    connectedDrives += $"{i} ";
-
-                                _Hosts.AddRange(partitions);
+                                VirtualFileSystem vfs;
+                                var path = string.Format(@"\\.\PhysicalDrive{0:D}", i);
+                                var stream = new DeviceStream(path);
+                                Host = new FileSystemHost(vfs = new VirtualFileSystem(stream, path));
+                                Host.Prefix = null;
+                                if (Host.Mount(MountPoint, null, true, DebugFlags) < 0)
+                                {
+                                    //Console.WriteLine($"\r\nCannot mount physical drive {i}");
+                                } else
+                                {
+                                    _Hosts.Add(Host);
+                                    _HostsCount += vfs.RootFiles.Count;
+                                }
                             }
                             catch
                             { }
                         }
-                        Log(EVENTLOG_INFORMATION_TYPE, $"Loaded {_Hosts.Count} Xbox partitions from drives.");
+                        Log(EVENTLOG_INFORMATION_TYPE, $"Loaded {_HostsCount} Xbox partitions from drives.");
                     }
-                    if (_Hosts.Count <= 0)
+                    if (_HostsCount <= 0)
                         throw new CommandLineUsageException();
 
                     Console.Title = $"HDD {connectedDrives}- xbox-winfsp";
                     Console.WriteLine("\r\nHit CTRL+C in this window to unmount.");
+                } else
+                {
+                    throw new CommandLineUsageException();
                 }
             }
             catch (CommandLineUsageException ex)
@@ -298,10 +365,23 @@ namespace XboxWinFsp
            //     throw;
            // }
         }
+
         protected override void OnStop()
         {
-            _Host.Unmount();
-            _Host = null;
+            if(_Host != null)
+            {
+                _Host.Unmount();
+                _Host = null;
+            }
+            if(_Hosts != null)
+            {
+                for(int i = _Hosts.Count - 1; i >= 0; i--)
+                {
+                    if (_Hosts[i] != null)
+                        _Hosts[i].Unmount();
+                    _Hosts.RemoveAt(i);
+                }
+            }
         }
 
         private static void argtos(String[] Args, ref int I, ref String V)
@@ -311,6 +391,7 @@ namespace XboxWinFsp
             else
                 throw new CommandLineUsageException();
         }
+
         private static void argtol(String[] Args, ref int I, ref UInt32 V)
         {
             Int32 R;

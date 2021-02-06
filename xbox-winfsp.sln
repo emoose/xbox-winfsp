@@ -1,9 +1,9 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 16
 VisualStudioVersion = 16.0.29709.97
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFDC}") = "xbox-winfsp", "xbox-winfsp.csproj", "{6EC13EBC-BD7E-4997-9B29-49D5F06143A6}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "xbox-winfsp", "xbox-winfsp.csproj", "{6EC13EBC-BD7E-4997-9B29-49D5F06143A6}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

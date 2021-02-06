@@ -3,7 +3,6 @@ using System.IO;
 using System.Text;
 using System.Linq;
 using System.Collections.Generic;
-using System.Security.AccessControl;
 using System.Runtime.InteropServices;
 
 using Fsp;
@@ -86,38 +85,10 @@ namespace XboxWinFsp
             { "SystemExt", 0x18E30000, 0x8000000 },
         };
 
-        // For loading from a physical drive
-        public FatxDevice(int physicalDeviceNum)
-        {
-            var sfh = Natives.CreateFile(GetPhysicalDevicePath(physicalDeviceNum),
-                EFileAccess.GenericRead | EFileAccess.GenericAll,
-                EFileShare.Read | EFileShare.Write,
-                IntPtr.Zero, ECreationDisposition.OpenExisting,
-                EFileAttributes.Normal, IntPtr.Zero);
-
-            // Get our device size
-            uint high = 0;
-            uint low = Natives.GetFileSize(sfh, ref high);
-            DriveSize = (high << 32) | low;
-
-            if (DriveSize == 0xffffffff)
-                DriveSize = Natives.GetDriveSize(sfh);
-
-            // Create a stream to read with
-            Stream = new FileStream(sfh, FileAccess.ReadWrite, 0x200 * 0x200, false);
-            Stream = new AlignedStream(Stream, 0x200 * 0x200);
-        }
-
-        // For loading from a drive backup
         public FatxDevice(Stream stream)
         {
             Stream = stream;
             DriveSize = stream.Length;
-        }
-
-        public static string GetPhysicalDevicePath(int deviceNum)
-        {
-            return string.Format(@"\\.\PhysicalDrive{0:D}", deviceNum);
         }
 
         public bool IsFatxDevice()
@@ -185,12 +156,12 @@ namespace XboxWinFsp
             return false;
         }
 
-        public List<FileSystemHost> LoadPartitions(uint DebugLogLevel = 0)
+        public List<ReadOnlyFileSystem> LoadPartitions(uint DebugLogLevel = 0)
         {
             if (!IsFatxDevice())
                 return null;
 
-            var filesystems = new List<FileSystemHost>();
+            var filesystems = new List<ReadOnlyFileSystem>();
 
             List<Tuple<String, long, long>> partitions;
 
@@ -262,11 +233,6 @@ namespace XboxWinFsp
                 return null;
             }
 
-            // Read in cache partition data
-            Stream.Position = 0x800;
-            CacheHeader = Stream.ReadStruct<CACHE_PARTITION_DATA>();
-            CacheHeader.EndianSwap();
-
             // Sort partitions by their offset
             partitions = partitions.OrderBy(p => p.Item2).ThenBy(p => p.Item3).ToList();
 
@@ -295,6 +261,11 @@ namespace XboxWinFsp
 
             // TODO: check if any partitions interfere with each other (eg. devkit Partition1 located inside retail Partition1 space), and mark the drive label if so ("CORRUPT" or something similar)
 
+            // Read in cache partition data
+            Stream.Position = 0x800;
+            CacheHeader = Stream.ReadStruct<CACHE_PARTITION_DATA>();
+            CacheHeader.EndianSwap();
+
             // Load in the filesystems & mount them:
             int stfcIndex = 0;
             int driveIndex = -1;
@@ -309,34 +280,38 @@ namespace XboxWinFsp
                 var fatx = new FatxFileSystem(Stream, partition.Item1, partition.Item2, partition.Item3);
                 fatx.StreamLock = StreamLock;
 
-                var Host = new FileSystemHost(fatx);
-                Host.Prefix = null;
-                if (Host.Mount(null, null, false, DebugLogLevel) < 0)
+                try
                 {
-                    if (true)
+                    fatx.FatxInit();
+                    filesystems.Add(fatx);
+                } catch (FileSystemParseException)
+                {
+                    // Not a FATX partition. Let's try STFS
+                    Stream.Position = partition.Item2;
+                    var stfs = new StfsFileSystem(Stream, partition.Item1, partition.Item2);
+                    stfs.StreamLock = StreamLock;
+                    stfs.SkipHashChecks = true; // TODO!
+                    if (stfcIndex < 2 && CacheHeader.IsValid)
                     {
-                        Stream.Position = partition.Item2;
-                        var stfs = new StfsFileSystem(Stream, partition.Item1, partition.Item2);
-                        stfs.StreamLock = StreamLock;
-                        stfs.SkipHashChecks = true; // TODO!
-                        if (stfcIndex < 2 && CacheHeader.IsValid)
-                        {
-                            stfs.CacheHeader = CacheHeader;
-                            stfs.CachePartitionIndex = stfcIndex;
-                            stfs.StfsVolumeDescriptor = CacheHeader.VolumeDescriptor[stfcIndex];
-                        }
-
-                        stfcIndex++;
-                        if (stfcIndex >= 2)
-                            stfcIndex = 0; // Reset index for devkit cache partitions
-
-                        Host = new FileSystemHost(stfs);
-                        Host.Prefix = null;
-                        if (Host.Mount(null, null, false, DebugLogLevel) < 0)
-                            continue;
+                        stfs.CacheHeader = CacheHeader;
+                        stfs.CachePartitionIndex = stfcIndex;
+                        stfs.StfsVolumeDescriptor = CacheHeader.VolumeDescriptor[stfcIndex];
                     }
+
+                    stfcIndex++;
+                    if (stfcIndex >= 2)
+                        stfcIndex = 0; // Reset index for devkit cache partitions
+
+                    try
+                    {
+                        stfs.StfsInit();
+                        filesystems.Add(stfs);
+                    }
+                    catch (FileSystemParseException)
+                    { }
+
                 }
-                filesystems.Add(Host);
+                
             }
 
             return filesystems;

@@ -43,7 +43,7 @@ namespace XboxWinFsp
 
         long Position = 0;
         long MaxSize = 0;
-        long ClusterCount = 0; // is +1 of the actual count, because first cluster is kReservedChainMapEntries..
+        long ClusterCount = 0;
         long DataAddress = 0;
         uint[] ChainMap;
 
@@ -75,7 +75,7 @@ namespace XboxWinFsp
             reader = new BinaryReader(stream);
         }
 
-        void FatxInit()
+        public void FatxInit()
         {
             if (Position == 0)
                 Position = Stream.Position;
