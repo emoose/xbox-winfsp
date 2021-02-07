@@ -25,7 +25,6 @@ using Microsoft.Win32;
 
 using Fsp;
 using System.Security;
-using System.Security.Permissions;
 using System.Collections.Generic;
 
 namespace XboxWinFsp
@@ -59,42 +58,47 @@ namespace XboxWinFsp
 
                 RegistryKey key;
 
-                try
-                {
-                    key = Registry.LocalMachine.OpenSubKey(@"Software\WinFsp\Services", true);
-                    if (key != null)
-                        key.DeleteSubKeyTree("xbox-winfsp", false);
-                }
-                catch (ObjectDisposedException)
-                {
-                    // Nothing
-                }
+                // Open HKEY_LOCAL_MACHINE for 32-bit applications
+                RegistryKey localKey32 = RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, RegistryView.Registry32);
+
+                // Open HKEY_LOCAL_MACHINE for 64-bit applications (old versions incorrectly set this)
+                RegistryKey localKey64 = RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, RegistryView.Registry64);
 
                 try
                 {
-                    key = Registry.LocalMachine.OpenSubKey(@"Software\Classes\*\shell", true);
+                    key = localKey64.OpenSubKey(@"Software\WinFsp\Services", true); // Clean old versions
+                    if (key != null)
+                        key.DeleteSubKeyTree("xbox-winfsp", false);
+                }
+                catch (ObjectDisposedException) { }
+
+                try
+                {
+                    key = localKey32.OpenSubKey(@"Software\WinFsp\Services", true);
+                    if (key != null)
+                        key.DeleteSubKeyTree("xbox-winfsp", false);
+                }
+                catch (ObjectDisposedException) { }
+
+                try
+                {
+                    key = localKey32.OpenSubKey(@"Software\Classes\*\shell", true);
                     if (key != null)
                     {
                         key.DeleteSubKeyTree("Mount as Xbox STFS/GDF", false); // Old key, before changes
                     }
                 }
-                catch (ObjectDisposedException)
-                {
-                    // Nothing
-                }
+                catch (ObjectDisposedException) { }
 
                 try
                 {
-                    key = Registry.LocalMachine.OpenSubKey(@"Software\Classes\*\shell", true);
+                    key = localKey32.OpenSubKey(@"Software\Classes\*\shell", true);
                     if (key != null)
                     {
                         key.DeleteSubKeyTree("Mount with XBOX-WINFSP", false);
                     }
                 }
-                catch (ObjectDisposedException)
-                {
-                    // Nothing
-                }
+                catch (ObjectDisposedException) { }
 
                 Console.WriteLine("Removed Xbox filesystems successfully.\r\n");
             }
@@ -117,16 +121,28 @@ namespace XboxWinFsp
 
             try
             {
+                RegistryKey key;
 
+                // Open HKEY_LOCAL_MACHINE for 32-bit applications
+                RegistryKey localKey32 = RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, RegistryView.Registry32);
+
+                key = localKey32.CreateSubKey(@"Software\WinFsp\Services\xbox-winfsp");
+                if (key == null)
+                    throw new ApplicationException();
+                
                 Console.WriteLine("\r\nSetting up Xbox filesystems...\r\n");
                 // Add to WinFsp services list, allows using "net use X: \\xbox-winfps\C$\game.iso"
-                Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\WinFsp\Services\xbox-winfsp", "CommandLine", "-u %1 -m %2", RegistryValueKind.String);
-                Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\WinFsp\Services\xbox-winfsp", "Executable", System.Reflection.Assembly.GetEntryAssembly().Location, RegistryValueKind.String);
-                Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\WinFsp\Services\xbox-winfsp", "Security", "D:P(A;;RPWPLC;;;WD)", RegistryValueKind.String);
-                Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\WinFsp\Services\xbox-winfsp", "JobControl", 1, RegistryValueKind.DWord);
+                key.SetValue("CommandLine", "-u %1 -m %2", RegistryValueKind.String);
+                key.SetValue("Executable", System.Reflection.Assembly.GetEntryAssembly().Location, RegistryValueKind.String);
+                key.SetValue("Security", "D:P(A;;RPWPLC;;;WD)", RegistryValueKind.String);
+                key.SetValue("JobControl", 1, RegistryValueKind.DWord);
+
+                key = localKey32.CreateSubKey(@"Software\Classes\*\shell\Mount with XBOX-WINFSP\command");
+                if (key == null)
+                    throw new ApplicationException();
 
                 // Context menu item for all files (since STFS has no extension...)
-                Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\Classes\*\shell\Mount with XBOX-WINFSP\command", null, $"\"{System.Reflection.Assembly.GetEntryAssembly().Location}\" -i \"%1\" -m *");
+                key.SetValue(null, $"\"{System.Reflection.Assembly.GetEntryAssembly().Location}\" -i \"%1\" -m *");
 
                 Console.WriteLine("Successfully setup filesystems, you may need to restart for changes to take effect.\r\n");
             }
