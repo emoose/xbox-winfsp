@@ -218,12 +218,19 @@ namespace XboxWinFsp
                     if (-1 != I && VolumePrefix.Length > I && '\\' != VolumePrefix[I + 1])
                     {
                         I = VolumePrefix.IndexOf('\\', I + 1);
-                        VolumePrefix = VolumePrefix.Substring(I);
-                        if(VolumePrefix.StartsWith(@"\PhysicalDrive", StringComparison.InvariantCultureIgnoreCase))
+                        if (-1 != I)
                         {
-                            // Format has to be \\.\\PHYSICALDRIVE{0-N}
-                            ImagePath = String.Format(@"\\.\{0}", VolumePrefix);
-                            VolumePrefix = null;
+                            var truncatedPrefix = VolumePrefix.Substring(I);
+                            if (truncatedPrefix.StartsWith(@"\PhysicalDrive", StringComparison.InvariantCultureIgnoreCase))
+                            {
+                                // Format has to be \\.\PHYSICALDRIVE{0-N}
+                                ImagePath = String.Format(@"\\.{0}", truncatedPrefix);
+                            }
+                            else if (truncatedPrefix.Length > 2 && ':' == truncatedPrefix[2])
+                            {
+                                // Format has to be \\.\X:
+                                ImagePath = String.Format(@"\\.{0}", truncatedPrefix);
+                            }
                         }
                     }
                 }
@@ -289,7 +296,7 @@ namespace XboxWinFsp
                     if (openExplorer)
                         System.Diagnostics.Process.Start("explorer.exe", MountPoint);
 
-                    Log(EVENTLOG_INFORMATION_TYPE, String.Format("{0}{1}{2} -p {3} -m {4}",
+                    Log(EVENTLOG_INFORMATION_TYPE, String.Format("{0}{1}{2} -i {3} -m {4}",
                         PROGNAME,
                         null != VolumePrefix && 0 < VolumePrefix.Length ? " -u " : "",
                             null != VolumePrefix && 0 < VolumePrefix.Length ? VolumePrefix : "",
