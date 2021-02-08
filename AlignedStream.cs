@@ -25,7 +25,7 @@ namespace XboxWinFsp
         public override bool CanSeek { get { return true; } }
 
         byte[] AlignmentBuffer;
-        long AlignmentPosition = 0;
+        long AlignmentPosition = -1;
         private long position;
         bool FillBuffer = false;
 

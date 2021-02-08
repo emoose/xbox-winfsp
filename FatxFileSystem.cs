@@ -34,7 +34,6 @@ namespace XboxWinFsp
         public const uint kCluster16Bad = 0xfff7;
         public const uint kCluster16Media = 0xfff8;
 
-        const uint kReservedChainMapEntries = 1; // first entry in chainmap is reserved (doesn't actually exist)
         const uint kFatxPageSize = 0x1000; // size of a cache-page?
 
         FAT_VOLUME_METADATA FatHeader;
@@ -44,7 +43,7 @@ namespace XboxWinFsp
 
         long Position = 0;
         long MaxSize = 0;
-        long ClusterCount = 0; // is +1 of the actual count, because first cluster is kReservedChainMapEntries..
+        long ClusterCount = 0;
         long DataAddress = 0;
         uint[] ChainMap;
 
@@ -76,7 +75,7 @@ namespace XboxWinFsp
             reader = new BinaryReader(stream);
         }
 
-        void FatxInit()
+        public void FatxInit()
         {
             if (Position == 0)
                 Position = Stream.Position;
@@ -112,7 +111,7 @@ namespace XboxWinFsp
             // (so we have to do the same in order for the chainMap calculations below to make sense)
             // 0x1000000 seems to be the smallest out there, so we'll use that
             MaxSize = Math.Max(0x1000000, PartitionSize);
-            ClusterCount = (MaxSize / ClusterSize) + kReservedChainMapEntries;
+            ClusterCount = (MaxSize / ClusterSize);
 
             // Read in the chainmap...
             Stream.Position = Position + kFatxPageSize;
@@ -145,7 +144,7 @@ namespace XboxWinFsp
 
             // Calculate byte totals
             BytesFree = numFree * ClusterSize;
-            BytesInUse = ((ulong)(ClusterCount - kReservedChainMapEntries) * ClusterSize) - BytesFree;
+            BytesInUse = ((ulong)ClusterCount * ClusterSize) - BytesFree;
 
             // Calculate address of data start
             long chainMapLength = ClusterCount * (IsFatx32 ? 4 : 2);
@@ -215,7 +214,7 @@ namespace XboxWinFsp
         uint[] FatxGetClusterChain(uint cluster, int limit = int.MaxValue)
         {
             var chain = new List<uint>();
-            while (cluster != 0xFFFFFFFF && limit > chain.Count)
+            while (cluster != kClusterLast && cluster != kClusterMedia && cluster != kClusterBad && limit > chain.Count)
             {
                 chain.Add(cluster);
                 cluster = ChainMap[cluster];
@@ -225,7 +224,7 @@ namespace XboxWinFsp
 
         long FatxClusterToAddress(long cluster)
         {
-            return DataAddress + ((cluster - kReservedChainMapEntries) * ClusterSize);
+            return DataAddress + ((cluster - 1) * ClusterSize);
         }
 
         public override Int32 Init(Object Host0)

@@ -61,7 +61,7 @@ namespace XboxWinFsp
             Position = partitionOffset;
         }
 
-        void StfsInit()
+        public void StfsInit()
         {
             if (Position == 0)
                 Position = Stream.Position;
