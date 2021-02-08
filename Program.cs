@@ -228,24 +228,22 @@ namespace XboxWinFsp
                     throw new CommandLineUsageException();
                 }
 
-                if (null == ImagePath && null != VolumePrefix)
+                if (ImagePath == null && VolumePrefix != null)
                 {
                     I = VolumePrefix.IndexOf('\\');
-                    if (-1 != I && VolumePrefix.Length > I && '\\' != VolumePrefix[I + 1])
+                    if (I != -1 && VolumePrefix.Length > I && VolumePrefix[I + 1] != '\\')
                     {
                         I = VolumePrefix.IndexOf('\\', I + 1);
-                        if (-1 != I)
+                        if (I != -1)
                         {
                             var truncatedPrefix = VolumePrefix.Substring(I);
                             if (truncatedPrefix.StartsWith(@"\PhysicalDrive", StringComparison.InvariantCultureIgnoreCase))
-                            {
-                                // Format has to be \\.\PHYSICALDRIVE{0-N}
-                                ImagePath = String.Format(@"\\.{0}", truncatedPrefix);
+                            {   // \PhysicalDriveN
+                                ImagePath = String.Format(@"\\.{0}", truncatedPrefix.Substring(0, 15));  // \\.\PhysicalDriveN
                             }
-                            else if (truncatedPrefix.Length > 2 && ':' == truncatedPrefix[2])
-                            {
-                                // Format has to be \\.\X:
-                                ImagePath = String.Format(@"\\.{0}", truncatedPrefix);
+                            else if (truncatedPrefix.Length > 2 && truncatedPrefix[2] == '$')
+                            {   // \X$\path\to\file
+                                ImagePath = String.Format(@"{0}:{1}", truncatedPrefix[1], truncatedPrefix.Substring(3));    //  X:\path\to\file
                             }
                         }
                     }
