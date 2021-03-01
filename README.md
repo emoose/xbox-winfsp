@@ -15,7 +15,7 @@ To do this, simply connect the HDD to your computer somehow, then right-click th
 This will then iterate over all connected drives on your PC, check if they contain any FATX/STFC partitions, and mount any that do.
 
 ATM though unfortunately any partitions created by WinFsp as admin, can only be accessed by admin...  
-To work around this you can eg. run Notepad as admin, then browse the partitions through the open-file-dialog.  
+To work around this you can eg. run Notepad as admin, then browse the partitions through the open-file-dialog. You can also run a thirdparty file explorer as admin (e.g. 7zip).
 Hopefully I can find a proper workaround for this soon, since this reduces usability a huge amount.
 (it might have something to do with SDDL security descriptors, nothing I've tried has actually worked yet though :()
 
