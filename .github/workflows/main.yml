@@ -1,27 +1,37 @@
 name: CI
 
-on: [push]
+on: [push, pull_request]
 
 jobs:
   build:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Release, Debug]
+    env:
+      POWERSHELL_TELEMETRY_OPTOUT: 1
     steps:
       - name: Checkout
-        uses: actions/checkout@v1
-        
+        uses: actions/checkout@v2
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v1
+
       - name: Build
-        run: |
-          cd "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\MSBuild\Current\Bin\"
-          .\MSBuild.exe $Env:GITHUB_WORKSPACE\xbox-winfsp.sln /p:Configuration=Release
+        run: msbuild xbox-winfsp.sln /m /p:Configuration=${{ matrix.configuration }}
 
       - name: Prepare artifacts
+        if: matrix.configuration == 'Release'
         run: |
-          mkdir artifacts
-          cp build/Release/xbox-winfsp.exe build/Release/winfsp-msil.dll dist/_INSTALL.bat dist/_UNINSTALL.bat README.md artifacts
+          mkdir -p artifacts
+          cp build/${{ matrix.configuration }}/{xbox-winfsp.exe,winfsp-msil.dll} dist/_{,UN}INSTALL.bat README.md artifacts
         shell: bash
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v1
+        if: matrix.configuration == 'Release'
+        uses: actions/upload-artifact@v2
         with:
-          name: xbox-winfsp.Release
+          name: xbox-winfsp.${{ matrix.configuration }}
           path: artifacts
+          if-no-files-found: error
