@@ -247,7 +247,10 @@ namespace XboxWinFsp
 
                 byte[] fileNameBytes = new byte[DirEntry.FileNameLength];
                 stream.Read(fileNameBytes, 0, DirEntry.FileNameLength);
-                fileName = Encoding.ASCII.GetString(fileNameBytes);
+
+                // Windows-1252 encoding seems to allow ANSI/extended ASCII characters to work
+                // eg. used in "Amped: Freestyle Snowboarding" for the file "Gigi Rüf.res"
+                fileName = Encoding.GetEncoding(1252).GetString(fileNameBytes);
 
                 // Align code from Velocity, seems to work great
                 stream.Position = (long)((ulong)(DirEntryAddr + DirEntry.FileNameLength + 0x11) & 0xFFFFFFFFFFFFFFFC);

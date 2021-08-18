@@ -1134,6 +1134,69 @@
             Number of bytes read.
             </param>
         </member>
+        <member name="M:Fsp.FileSystemHost.NotifyBegin(System.UInt32)">
+            <summary>
+            Begin notifying Windows that the file system has file changes.
+            </summary>
+            <remarks>
+            <para>
+            A file system that wishes to notify Windows about file changes must
+            first issue an FspFileSystemBegin call, followed by 0 or more
+            FspFileSystemNotify calls, followed by an FspFileSystemNotifyEnd call.
+            </para><para>
+            This operation blocks concurrent file rename operations. File rename
+            operations may interfere with file notification, because a file being
+            notified may also be concurrently renamed. After all file change
+            notifications have been issued, you must make sure to call
+            FspFileSystemNotifyEnd to allow file rename operations to proceed.
+            </para>
+            </remarks>
+            <returns>
+            STATUS_SUCCESS or error code. The error code STATUS_CANT_WAIT means that
+            a file rename operation is currently in progress and the operation must be
+            retried at a later time.
+            </returns>
+        </member>
+        <member name="M:Fsp.FileSystemHost.NotifyEnd">
+            <summary>
+            End notifying Windows that the file system has file changes.
+            </summary>
+            <remarks>
+            <para>
+            A file system that wishes to notify Windows about file changes must
+            first issue an FspFileSystemBegin call, followed by 0 or more
+            FspFileSystemNotify calls, followed by an FspFileSystemNotifyEnd call.
+            </para><para>
+            This operation allows any blocked file rename operations to proceed.
+            </para>
+            </remarks>
+            <returns>STATUS_SUCCESS or error code.</returns>
+        </member>
+        <member name="M:Fsp.FileSystemHost.Notify(Fsp.Interop.NotifyInfo[])">
+            <summary>
+            Notify Windows that the file system has file changes.
+            </summary>
+            <remarks>
+            <para>
+            A file system that wishes to notify Windows about file changes must
+            first issue an FspFileSystemBegin call, followed by 0 or more
+            FspFileSystemNotify calls, followed by an FspFileSystemNotifyEnd call.
+            </para><para>
+            Note that FspFileSystemNotify requires file names to be normalized. A
+            normalized file name is one that contains the correct case of all characters
+            in the file name.
+            </para><para>
+            For case-sensitive file systems all file names are normalized by definition.
+            For case-insensitive file systems that implement file name normalization,
+            a normalized file name is the one that the file system specifies in the
+            response to Create or Open (see also FspFileSystemGetOpenFileInfo). For
+            case-insensitive file systems that do not implement file name normalization
+            a normalized file name is the upper case version of the file name used
+            to open the file.
+            </para>
+            </remarks>
+            <returns>STATUS_SUCCESS or error code.</returns>
+        </member>
         <member name="T:Fsp.Interop.VolumeInfo">
             <summary>
             Contains volume information about a file system.
@@ -1215,6 +1278,21 @@
         <member name="P:Fsp.Interop.FileInfo.EaSize">
             <summary>
             The extended attribute size of the file.
+            </summary>
+        </member>
+        <member name="T:Fsp.Interop.NotifyAction">
+            <summary>
+            Enumeration of all the possible values for NotifyInfo.Action
+            </summary>
+        </member>
+        <member name="T:Fsp.Interop.NotifyFilter">
+            <summary>
+            Enumeration of all the possible values for NotifyInfo.Filter
+            </summary>
+        </member>
+        <member name="T:Fsp.Interop.NotifyInfo">
+            <summary>
+            Contains file change notification information.
             </summary>
         </member>
         <member name="T:Fsp.Service">
