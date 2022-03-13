@@ -239,7 +239,7 @@ namespace XboxWinFsp
                             var truncatedPrefix = VolumePrefix.Substring(I);
                             if (truncatedPrefix.StartsWith(@"\PhysicalDrive", StringComparison.InvariantCultureIgnoreCase))
                             {   // \PhysicalDriveN
-                                ImagePath = String.Format(@"\\.{0}", truncatedPrefix.Substring(0, 15));  // \\.\PhysicalDriveN
+                                ImagePath = String.Format(@"\\.\PhysicalDrive{0}", truncatedPrefix.Substring(14, 1));  // \\.\PhysicalDriveN
                             }
                             else if (truncatedPrefix.Length > 2 && truncatedPrefix[2] == '$')
                             {   // \X$\path\to\file
@@ -344,6 +344,8 @@ namespace XboxWinFsp
                                 {
                                     _Hosts.Add(Host);
                                     _HostsCount += vfs.RootFiles.Count;
+                                    if (vfs.RootFiles.Count > 0)
+                                        connectedDrives += $"{i} ";
                                 }
                             }
                             catch
