@@ -13,10 +13,15 @@ namespace XboxWinFsp
     {
         const int kSectorSize = 0x800;
 
-        const int kXgd2HeaderAddress = 0x10000; // Address of XGD1/XGD2 header (depends on Version field value)
-        const int kXgd25HeaderAddress = 0xFD90000 + 0x10000; // Address of XGD2.5 header?
-        const int kXgd3HeaderAddress = 0x2080000 + 0x10000; // Address of XGD3 header?
-        const int kXgd1HeaderAddress = 0x18300000 + 0x10000; // Address of XGD1 (OG xbox) header
+        // Commonly used addrs for XGD data start
+        // These aren't actually set in stone, XGD sector seems to be defined inside SS
+        // "Xbox 360 Trial Disk" is one weird outlier that uses a completely different address
+        // See DvdPhysicalFormatInformation usage inside GdfxInit for how to use SS to find it
+        const long kXgdRawHeaderAddress = 0x10000; // SDK generated only?
+        const long kXgd1HeaderAddress = 0x18300000 + 0x10000; // Address of XGD1 (OG xbox) header
+        const long kXgd2HeaderAddress = 0xFD90000 + 0x10000; // Address of XGD2 header?
+        const long kXgd3HeaderAddress = 0x2080000 + 0x10000; // Address of XGD3 header?
+        const long kXgd2HeaderAddressAlt = 0x89D80000 + 0x10000; // "Xbox 360 Trial Disk" (http://redump.org/disc/58095/) - only disk with weird XGD address seen so far
 
         GDF_VOLUME_DESCRIPTOR GdfHeader;
 
@@ -30,7 +35,7 @@ namespace XboxWinFsp
         void GdfxInit()
         {
             // First try reading GDF header from some standard addresses:
-            int[] standardAddresses = new int[] { kXgd2HeaderAddress, kXgd25HeaderAddress, kXgd3HeaderAddress, kXgd1HeaderAddress };
+            long[] standardAddresses = new long[] { kXgdRawHeaderAddress, kXgd2HeaderAddress, kXgd3HeaderAddress, kXgd1HeaderAddress, kXgd2HeaderAddressAlt };
             long headerAddress = -1;
             foreach (var addr in standardAddresses)
             {
@@ -45,6 +50,42 @@ namespace XboxWinFsp
                     }
                 }
             }
+
+            // If that failed, try locating XGD sector from data inside merged SS & PFI, if exists
+            // TODO: turns out this is pointless, because SS/PFI/DMI mergers copy them into the sectors just before XGD area
+            // So in order to find SS/PFI, you'd need to know where XGD was in the first place, which is the whole reason we're trying to read SS/PFI...
+            // Commenting out for now, method used here should still be useful for reading from external SS/PFI files for any other problematic disks
+            /*
+            const int kSectorNumXtremePFI = 0x1FB1D; // note: these are only actually valid for disks with XGD @ 0xFD90000, which is why this code is removed
+            const int kSectorNumXtremeDMI = 0x1FB1E;
+            const int kSectorNumXtremeSS = 0x1FB1F;
+            if (!GdfHeader.IsValid)
+            {
+                long pfiAddress = kSectorNumXtremePFI * kSectorSize;
+                long ssAddress = kSectorNumXtremeSS * kSectorSize;
+                if (Stream.Length > pfiAddress && Stream.Length > ssAddress)
+                {
+                    Stream.Position = pfiAddress;
+                    var pfi = Stream.ReadStruct<DvdPhysicalFormatInformation>();
+
+                    Stream.Position = ssAddress;
+                    var ss = Stream.ReadStruct<DvdPhysicalFormatInformation>();
+                    if (pfi.IsMainPFI && ss.IsXboxPFI)
+                    {
+                        // DataZoneSectorStart is in "physical" sectors, which include lead-in and other sectors that come before the actual data area
+                        // main PFI gives us the starting sector for data area, so we can remove that from the xbox/SS PFI to find the XGD sector in our data
+                        long xgdSector = ss.DataZoneSectorStart - pfi.DataZoneSectorStart;
+                        long xgdAddress = (xgdSector + 32) * kSectorSize;
+                        if (Stream.Length > xgdAddress)
+                        {
+                            Stream.Position = xgdAddress;
+                            GdfHeader = Stream.ReadStruct<GDF_VOLUME_DESCRIPTOR>();
+                            if (GdfHeader.IsValid)
+                                headerAddress = xgdAddress;
+                        }
+                    }
+                }
+            }*/
 
             // If that failed, try scanning the file for it:
             if (!GdfHeader.IsValid)
@@ -147,15 +188,15 @@ namespace XboxWinFsp
                 Host.VolumeCreationTime = (ulong)GdfHeader.TimeStamp;
                 Host.VolumeSerialNumber = GdfHeader.RootSector;
 
-                string gdfType = "XGD1";
-                if (GdfHeader.Version != 0) // Only Xbox360 disks have Version set?
-                {
+                string gdfType = "Raw XGD";
+                if (HeaderAddress == kXgd1HeaderAddress)
+                    gdfType = "XGD1";
+                else if (HeaderAddress == kXgd2HeaderAddress)
                     gdfType = "XGD2";
-                    if (HeaderAddress == kXgd25HeaderAddress)
-                        gdfType = "XGD2.5";
-                    else if (HeaderAddress == kXgd3HeaderAddress)
-                        gdfType = "XGD3";
-                }
+                else if (HeaderAddress == kXgd3HeaderAddress)
+                    gdfType = "XGD3";
+                else if (HeaderAddress == kXgd2HeaderAddressAlt)
+                    gdfType = "XGD2, oversized video partition";
                 Host.FileSystemName = $"GDFX ({gdfType})";
 
                 return base.Init(Host0);
@@ -273,6 +314,59 @@ namespace XboxWinFsp
                     Marshal.Copy(bytes, 0, buffer, read);
                     return (uint)read;
                 }
+            }
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    public struct DvdPhysicalFormatInformation 
+    {
+        // based on format from https://www.ecma-international.org/wp-content/uploads/ECMA-267_1st_edition_december_1997.pdf
+        // are there any better sources we can find this struct from?
+
+        public byte DiscCategoryAndVerNo; // 0x01 in main PFI, 0xD1/0xE1 in SS PFI
+        public byte DiscSizeAndMaxTransferRate; // 0x02 in main PFI, 0x0F in SS PFI
+        public byte DiscStructure; // 0x31
+        public byte RecordingDensity; // 0x10
+
+        public uint DataZoneSectorStart; // should always be 0x30000 for main disk PFI, security-sector PFI stores (XGD sector + MainPFI.DataZoneSectorStart)
+        public uint DataZoneSectorEnd;
+        public uint DataZoneSectorEndLayer0;
+        public byte BCADescriptor;
+
+        // xbox PFI contains a bunch of extra data after it
+
+        public void EndianSwap()
+        {
+            DataZoneSectorStart = DataZoneSectorStart.EndianSwap();
+            DataZoneSectorEnd = DataZoneSectorEnd.EndianSwap();
+            DataZoneSectorEndLayer0 = DataZoneSectorEndLayer0.EndianSwap();
+        }
+
+        public bool IsValid
+        {
+            get
+            {
+                return DiscStructure == 0x31 && RecordingDensity == 0x10; // seems constant between main PFI & xbox PFI
+            }
+        }
+
+        public bool IsMainPFI
+        {
+            get
+            {
+                // TODO: Unsure if these are constant between every disc, commenting for now...
+                //return DiscCategoryAndVerNo == 0x01 && DiscSizeAndMaxTransferRate == 0x02 && IsValid;
+                return IsValid;
+            }
+        }
+
+        public bool IsXboxPFI
+        {
+            get
+            {
+                // Booktype D for OG xbox, E for xbox360, not sure if any others were ever used
+                return (DiscCategoryAndVerNo == 0xD1 || DiscCategoryAndVerNo == 0xE1) && DiscSizeAndMaxTransferRate == 0x0F && IsValid;
             }
         }
     }
