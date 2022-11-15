@@ -9,10 +9,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v1
         
+      - name: Add msbuild to PATH
+        uses: microsoft/setup-msbuild@v1.1
+        
       - name: Build
         run: |
-          cd "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\MSBuild\Current\Bin\"
-          .\MSBuild.exe $Env:GITHUB_WORKSPACE\xbox-winfsp.sln /p:Configuration=Release
+          MSBuild $Env:GITHUB_WORKSPACE\xbox-winfsp.sln /p:Configuration=Release
 
       - name: Prepare artifacts
         run: |
