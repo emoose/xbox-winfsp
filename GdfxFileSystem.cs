@@ -249,6 +249,12 @@ namespace XboxWinFsp
                 stream.Read(fileNameBytes, 0, DirEntry.FileNameLength);
                 fileName = Encoding.ASCII.GetString(fileNameBytes);
 
+                if(FileSystem.GdfSectorToAddress(DirEntry.FirstSector) + DirEntry.FileSize > (ulong)stream.Length)
+                {
+                    // The stream ends before the file, truncate it
+                    DirEntry.FileSize = (uint)((ulong)stream.Length - FileSystem.GdfSectorToAddress(DirEntry.FirstSector));
+                }
+
                 // Align code from Velocity, seems to work great
                 stream.Position = (long)((ulong)(DirEntryAddr + DirEntry.FileNameLength + 0x11) & 0xFFFFFFFFFFFFFFFC);
                 return true;
