@@ -55,10 +55,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System" />
-    <Reference Include="winfsp-msil, Version=1.0.0.0, Culture=neutral, PublicKeyToken=b099876d8fa9b1f3, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>dist\winfsp-msil.dll</HintPath>
-    </Reference>
+    <PackageReference Include="winfsp.net" Version="2.0.23075" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="FatxFileSystem.cs" />
