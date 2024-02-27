@@ -293,6 +293,12 @@ namespace XboxWinFsp
                 // eg. used in "Amped: Freestyle Snowboarding" for the file "Gigi Rüf.res"
                 fileName = Encoding.GetEncoding(1252).GetString(fileNameBytes);
 
+                if(FileSystem.GdfSectorToAddress(DirEntry.FirstSector) + DirEntry.FileSize > (ulong)stream.Length)
+                {
+                    // The stream ends before the file, truncate it
+                    DirEntry.FileSize = (uint)((ulong)stream.Length - FileSystem.GdfSectorToAddress(DirEntry.FirstSector));
+                }
+
                 // Align code from Velocity, seems to work great
                 stream.Position = (long)((ulong)(DirEntryAddr + DirEntry.FileNameLength + 0x11) & 0xFFFFFFFFFFFFFFFC);
                 return true;

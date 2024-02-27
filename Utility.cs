@@ -272,7 +272,7 @@ namespace XboxWinFsp
             return (number + pageSize - 1) / pageSize;
         }
 
-        public static DateTime DecodeMSTime(int dateTime)
+        public static DateTime DecodeMSTime(int dateTime, bool ogXbox = false)
         {
             if (dateTime == 0)
                 return DateTime.MinValue;
@@ -282,7 +282,7 @@ namespace XboxWinFsp
             int hour = (dateTime >> 11) & 0x1F;
             int day = (dateTime >> 16) & 0x1F;
             int month = (dateTime >> 21) & 0x0F;
-            int year = ((dateTime >> 25) & 0x7F) + 1980;
+            int year = ((dateTime >> 25) & 0x7F) + (ogXbox ? 2000 : 1980);
 
             try
             {

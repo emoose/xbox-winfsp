@@ -34,17 +34,17 @@ namespace XboxWinFsp
         public const uint kCluster16Bad = 0xfff7;
         public const uint kCluster16Media = 0xfff8;
 
-        const uint kReservedChainMapEntries = 1; // first entry in chainmap is reserved (doesn't actually exist)
         const uint kFatxPageSize = 0x1000; // size of a cache-page?
 
         FAT_VOLUME_METADATA FatHeader;
         bool IsBigEndian = false;
+        bool IsOgXboxFatx = false;
 
         long PartitionSize = 0;
 
         long Position = 0;
         long MaxSize = 0;
-        long ClusterCount = 0; // is +1 of the actual count, because first cluster is kReservedChainMapEntries..
+        long ClusterCount = 0;
         long DataAddress = 0;
         uint[] ChainMap;
 
@@ -69,14 +69,15 @@ namespace XboxWinFsp
             }
         }
 
-        public FatxFileSystem(Stream stream, string inputPath, long partitionOffset = 0, long partitionSize = 0) : base(stream, inputPath, kSectorSize)
+        public FatxFileSystem(Stream stream, string inputPath, long partitionOffset = 0, long partitionSize = 0, bool ogXbox = false) : base(stream, inputPath, kSectorSize)
         {
             Position = partitionOffset;
             PartitionSize = partitionSize;
+            IsOgXboxFatx = ogXbox;
             reader = new BinaryReader(stream);
         }
 
-        void FatxInit()
+        public void FatxInit()
         {
             if (Position == 0)
                 Position = Stream.Position;
@@ -112,7 +113,7 @@ namespace XboxWinFsp
             // (so we have to do the same in order for the chainMap calculations below to make sense)
             // 0x1000000 seems to be the smallest out there, so we'll use that
             MaxSize = Math.Max(0x1000000, PartitionSize);
-            ClusterCount = (MaxSize / ClusterSize) + kReservedChainMapEntries;
+            ClusterCount = (MaxSize / ClusterSize);
 
             // Read in the chainmap...
             Stream.Position = Position + kFatxPageSize;
@@ -145,7 +146,7 @@ namespace XboxWinFsp
 
             // Calculate byte totals
             BytesFree = numFree * ClusterSize;
-            BytesInUse = ((ulong)(ClusterCount - kReservedChainMapEntries) * ClusterSize) - BytesFree;
+            BytesInUse = ((ulong)ClusterCount * ClusterSize) - BytesFree;
 
             // Calculate address of data start
             long chainMapLength = ClusterCount * (IsFatx32 ? 4 : 2);
@@ -215,7 +216,7 @@ namespace XboxWinFsp
         uint[] FatxGetClusterChain(uint cluster, int limit = int.MaxValue)
         {
             var chain = new List<uint>();
-            while (cluster != 0xFFFFFFFF && limit > chain.Count)
+            while (cluster != kClusterLast && cluster != kClusterMedia && cluster != kClusterBad && limit > chain.Count)
             {
                 chain.Add(cluster);
                 cluster = ChainMap[cluster];
@@ -225,7 +226,7 @@ namespace XboxWinFsp
 
         long FatxClusterToAddress(long cluster)
         {
-            return DataAddress + ((cluster - kReservedChainMapEntries) * ClusterSize);
+            return DataAddress + ((cluster - 1) * ClusterSize);
         }
 
         public override Int32 Init(Object Host0)
@@ -320,7 +321,7 @@ namespace XboxWinFsp
             {
                 get
                 {
-                    return DirEntry.CreationTime;
+                    return FileSystem.IsOgXboxFatx ? DirEntry.CreationTimeOgXbox : DirEntry.CreationTime;
                 }
                 set { throw new NotImplementedException(); }
             }
@@ -329,7 +330,7 @@ namespace XboxWinFsp
             {
                 get
                 {
-                    return DirEntry.LastWriteTime;
+                    return FileSystem.IsOgXboxFatx ? DirEntry.LastWriteTimeOgXbox : DirEntry.LastWriteTime;
                 }
                 set { throw new NotImplementedException(); }
             }
@@ -338,7 +339,7 @@ namespace XboxWinFsp
             {
                 get
                 {
-                    return DirEntry.LastAccessTime;
+                    return FileSystem.IsOgXboxFatx ? DirEntry.LastAccessTimeOgXbox : DirEntry.LastAccessTime;
                 }
                 set { throw new NotImplementedException(); }
             }
@@ -357,7 +358,7 @@ namespace XboxWinFsp
                 DirEntry = reader.ReadStruct<FAT_DIRECTORY_ENTRY>();
                 if (FileSystem.IsBigEndian)
                     DirEntry.EndianSwap();
-                return DirEntry.IsValid;
+                return FileSystem.IsOgXboxFatx ? DirEntry.IsValidOgXbox : DirEntry.IsValid;
             }
 
             public uint ReadBytes(IntPtr buffer, ulong fileOffset, uint length)
@@ -504,15 +505,37 @@ namespace XboxWinFsp
         {
             get
             {
+                if (!IsValidFileNameLength || FirstCluster <= 0)
+                    return false;
                 try
                 {
-                    if (!IsValidFileNameLength || FirstCluster <= 0)
-                        return false;
                     // ToFileTimeUtc will throw exception if time is invalid
                     // Just hope these don't get optimized out..
                     bool test1 = CreationTime.ToFileTimeUtc() == CreationTime.ToFileTimeUtc();
                     bool test2 = LastWriteTime.ToFileTimeUtc() == LastWriteTime.ToFileTimeUtc();
                     bool test3 = LastAccessTime.ToFileTimeUtc() == LastAccessTime.ToFileTimeUtc();
+                    return test1 && test2 && test3; // TODO: more checks?
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+        }
+
+        public bool IsValidOgXbox
+        {
+            get
+            {
+                if (!IsValidFileNameLength || FirstCluster <= 0)
+                    return false;
+                try
+                {
+                    // ToFileTimeUtc will throw exception if time is invalid
+                    // Just hope these don't get optimized out..
+                    bool test1 = CreationTimeOgXbox.ToFileTimeUtc() == CreationTimeOgXbox.ToFileTimeUtc();
+                    bool test2 = LastWriteTimeOgXbox.ToFileTimeUtc() == LastWriteTimeOgXbox.ToFileTimeUtc();
+                    bool test3 = LastAccessTimeOgXbox.ToFileTimeUtc() == LastAccessTimeOgXbox.ToFileTimeUtc();
                     return test1 && test2 && test3; // TODO: more checks?
                 }
                 catch
@@ -538,6 +561,14 @@ namespace XboxWinFsp
             }
         }
 
+        public DateTime CreationTimeOgXbox
+        {
+            get
+            {
+                return Utility.DecodeMSTime(CreationTimeRaw, true);
+            }
+        }
+
         public DateTime LastWriteTime
         {
             get
@@ -546,11 +577,27 @@ namespace XboxWinFsp
             }
         }
 
+        public DateTime LastWriteTimeOgXbox
+        {
+            get
+            {
+                return Utility.DecodeMSTime(LastWriteTimeRaw, true);
+            }
+        }
+
         public DateTime LastAccessTime
         {
             get
             {
                 return Utility.DecodeMSTime(LastAccessTimeRaw);
+            }
+        }
+
+        public DateTime LastAccessTimeOgXbox
+        {
+            get
+            {
+                return Utility.DecodeMSTime(LastAccessTimeRaw, true);
             }
         }
 
