@@ -165,7 +165,9 @@ namespace XboxWinFsp
 
             List<Tuple<String, long, long>> partitions;
 
-            if (IsOGXboxDevice())
+            bool ogXbox = IsOGXboxDevice();
+
+            if (ogXbox)
             {
                 // Filter kXboxPartitions to the ones that could fit onto this drive/image
                 partitions = kOGXboxPartitions.Where(partition => partition.Item2 < DriveSize && partition.Item2 + partition.Item3 <= DriveSize).ToList();
@@ -277,7 +279,7 @@ namespace XboxWinFsp
                 driveIndex++;
 
                 Stream.Position = partition.Item2;
-                var fatx = new FatxFileSystem(Stream, partition.Item1, partition.Item2, partition.Item3);
+                var fatx = new FatxFileSystem(Stream, partition.Item1, partition.Item2, partition.Item3, ogXbox);
                 fatx.StreamLock = StreamLock;
 
                 try

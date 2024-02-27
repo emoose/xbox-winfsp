@@ -38,6 +38,7 @@ namespace XboxWinFsp
 
         FAT_VOLUME_METADATA FatHeader;
         bool IsBigEndian = false;
+        bool IsOgXboxFatx = false;
 
         long PartitionSize = 0;
 
@@ -68,10 +69,11 @@ namespace XboxWinFsp
             }
         }
 
-        public FatxFileSystem(Stream stream, string inputPath, long partitionOffset = 0, long partitionSize = 0) : base(stream, inputPath, kSectorSize)
+        public FatxFileSystem(Stream stream, string inputPath, long partitionOffset = 0, long partitionSize = 0, bool ogXbox = false) : base(stream, inputPath, kSectorSize)
         {
             Position = partitionOffset;
             PartitionSize = partitionSize;
+            IsOgXboxFatx = ogXbox;
             reader = new BinaryReader(stream);
         }
 
@@ -319,7 +321,7 @@ namespace XboxWinFsp
             {
                 get
                 {
-                    return DirEntry.CreationTime;
+                    return FileSystem.IsOgXboxFatx ? DirEntry.CreationTimeOgXbox : DirEntry.CreationTime;
                 }
                 set { throw new NotImplementedException(); }
             }
@@ -328,7 +330,7 @@ namespace XboxWinFsp
             {
                 get
                 {
-                    return DirEntry.LastWriteTime;
+                    return FileSystem.IsOgXboxFatx ? DirEntry.LastWriteTimeOgXbox : DirEntry.LastWriteTime;
                 }
                 set { throw new NotImplementedException(); }
             }
@@ -337,7 +339,7 @@ namespace XboxWinFsp
             {
                 get
                 {
-                    return DirEntry.LastAccessTime;
+                    return FileSystem.IsOgXboxFatx ? DirEntry.LastAccessTimeOgXbox : DirEntry.LastAccessTime;
                 }
                 set { throw new NotImplementedException(); }
             }
@@ -356,7 +358,7 @@ namespace XboxWinFsp
                 DirEntry = reader.ReadStruct<FAT_DIRECTORY_ENTRY>();
                 if (FileSystem.IsBigEndian)
                     DirEntry.EndianSwap();
-                return DirEntry.IsValid;
+                return FileSystem.IsOgXboxFatx ? DirEntry.IsValidOgXbox : DirEntry.IsValid;
             }
 
             public uint ReadBytes(IntPtr buffer, ulong fileOffset, uint length)
@@ -503,15 +505,37 @@ namespace XboxWinFsp
         {
             get
             {
+                if (!IsValidFileNameLength || FirstCluster <= 0)
+                    return false;
                 try
                 {
-                    if (!IsValidFileNameLength || FirstCluster <= 0)
-                        return false;
                     // ToFileTimeUtc will throw exception if time is invalid
                     // Just hope these don't get optimized out..
                     bool test1 = CreationTime.ToFileTimeUtc() == CreationTime.ToFileTimeUtc();
                     bool test2 = LastWriteTime.ToFileTimeUtc() == LastWriteTime.ToFileTimeUtc();
                     bool test3 = LastAccessTime.ToFileTimeUtc() == LastAccessTime.ToFileTimeUtc();
+                    return test1 && test2 && test3; // TODO: more checks?
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+        }
+
+        public bool IsValidOgXbox
+        {
+            get
+            {
+                if (!IsValidFileNameLength || FirstCluster <= 0)
+                    return false;
+                try
+                {
+                    // ToFileTimeUtc will throw exception if time is invalid
+                    // Just hope these don't get optimized out..
+                    bool test1 = CreationTimeOgXbox.ToFileTimeUtc() == CreationTimeOgXbox.ToFileTimeUtc();
+                    bool test2 = LastWriteTimeOgXbox.ToFileTimeUtc() == LastWriteTimeOgXbox.ToFileTimeUtc();
+                    bool test3 = LastAccessTimeOgXbox.ToFileTimeUtc() == LastAccessTimeOgXbox.ToFileTimeUtc();
                     return test1 && test2 && test3; // TODO: more checks?
                 }
                 catch
@@ -537,6 +561,14 @@ namespace XboxWinFsp
             }
         }
 
+        public DateTime CreationTimeOgXbox
+        {
+            get
+            {
+                return Utility.DecodeMSTime(CreationTimeRaw, true);
+            }
+        }
+
         public DateTime LastWriteTime
         {
             get
@@ -545,11 +577,27 @@ namespace XboxWinFsp
             }
         }
 
+        public DateTime LastWriteTimeOgXbox
+        {
+            get
+            {
+                return Utility.DecodeMSTime(LastWriteTimeRaw, true);
+            }
+        }
+
         public DateTime LastAccessTime
         {
             get
             {
                 return Utility.DecodeMSTime(LastAccessTimeRaw);
+            }
+        }
+
+        public DateTime LastAccessTimeOgXbox
+        {
+            get
+            {
+                return Utility.DecodeMSTime(LastAccessTimeRaw, true);
             }
         }
 
